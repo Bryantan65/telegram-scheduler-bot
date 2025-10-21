@@ -4,12 +4,14 @@ A serverless Telegram bot that parses natural language date/time phrases and cre
 
 ## 🚀 Features
 
-- 🗓️ **Natural Language Parsing** - "tmr 3pm", "next Friday 10:30am", "Meeting Friday"
-- 📅 **Multiple Calendar Options** - Download .ics files or add directly to Google Calendar
-- ⚡ **Serverless Architecture** - AWS Lambda + API Gateway + S3 + DynamoDB
+- 🗓️ **Advanced Natural Language Parsing** - "tmr 3pm", "next Friday 10:30am", "Meeting Friday", "1630", "16:30"
+- 📅 **Universal Calendar Support** - ICS documents + Google Calendar URLs work with all calendar apps
+- ⚡ **Serverless Architecture** - AWS Lambda + API Gateway + DynamoDB (S3-free!)
 - 🌍 **Timezone Support** - Configurable per user (default: Asia/Singapore)
 - ⚙️ **User Preferences** - Custom timezone and event duration settings
 - 📱 **All-Day Events** - Automatically detects date-only mentions
+- 🕐 **Multiple Time Formats** - 12-hour (3pm), 24-hour (1630), dot notation (3.30pm)
+- 📲 **One-Tap Calendar Import** - ICS files sent as Telegram documents
 - 🔒 **Secure** - Bot token stored in AWS Secrets Manager
 
 ## 🏗️ Architecture
@@ -17,9 +19,11 @@ A serverless Telegram bot that parses natural language date/time phrases and cre
 ### System Flow
 ```
 User Message → Telegram → API Gateway → Lambda Function → AWS Services
-                                            ├── S3 (ICS files)
                                             ├── DynamoDB (user data)
                                             └── Secrets Manager (bot token)
+                                            
+                     ↓
+            Telegram Document API (ICS files)
 ```
 
 ### How It Works
@@ -29,15 +33,14 @@ User Message → Telegram → API Gateway → Lambda Function → AWS Services
 4. **Lambda function:**
    - Retrieves bot token from Secrets Manager
    - Gets user preferences from DynamoDB
-   - Parses date/time using chrono-node library
-   - Creates .ics calendar file and uploads to S3
+   - Parses date/time using advanced chrono-node + custom patterns
+   - Creates .ics calendar file in memory
    - Generates Google Calendar URL
-   - Sends response back to user via Telegram API
+   - Sends ICS file as Telegram document + Google Calendar button
 
 ### AWS Components
 - **Lambda Function:** Serverless compute running Node.js bot logic
 - **API Gateway:** HTTP endpoint that receives Telegram webhooks
-- **S3 Bucket:** Stores generated .ics calendar files (auto-deleted after 7 days)
 - **DynamoDB:** NoSQL database storing user preferences (timezone, duration)
 - **Secrets Manager:** Securely stores Telegram bot token
 - **CDK:** Infrastructure as Code for deploying all AWS resources
@@ -74,6 +77,14 @@ Total: ~$0.0006/month
 | **Redis/ElastiCache** | In-memory only, data loss risk, more complex setup |
 | **S3** | Not designed for frequent small updates, eventual consistency issues |
 | **Lambda environment variables** | Limited size, no per-user storage |
+
+**Why No S3 for ICS Files?**
+
+We removed S3 storage in favor of **direct Telegram document sending**:
+- **Faster response** - no upload delay
+- **Better UX** - tap ICS file directly in chat
+- **Lower cost** - no S3 storage fees
+- **Simpler architecture** - fewer moving parts
 
 **Serverless Stack Synergy:**
 - **No cold start issues** - DynamoDB always ready
@@ -117,7 +128,6 @@ cdk deploy     # Deploys Lambda, API Gateway, S3, DynamoDB, etc.
 **What gets created:**
 - Lambda function with your bot code
 - API Gateway endpoint for Telegram webhooks
-- S3 bucket for calendar files
 - DynamoDB table for user preferences
 - Secrets Manager secret for bot token
 - IAM roles and policies
@@ -214,6 +224,8 @@ git push origin main  # ← This automatically deploys to AWS
 - "Doctor appointment next Friday 10:30am" → Appointment next Friday
 - "Meeting Friday" → All-day event this Friday
 - "Call 29th 5am" → Call on 29th of current month at 5 AM
+- "Standup 1630" → Meeting today at 4:30 PM (24-hour format)
+- "Lunch 12.30pm" → Lunch at 12:30 PM (dot notation)
 
 **Response:**
 ```
@@ -222,7 +234,10 @@ Title: Team meeting
 When: Fri, 25 Oct, 3:00 PM (60min)
 Timezone: Asia/Singapore
 
-[📥 Download ICS] [📅 Google Calendar]
+[🌐 Google Calendar]
+
+📅 Team_meeting.ics
+📅 Tap to add to your calendar
 ```
 
 ## 🛠️ Development
@@ -231,15 +246,21 @@ Timezone: Asia/Singapore
 ```
 telegram-scheduler-bot/
 ├── lambda/           # Lambda function code
-│   ├── index.mjs    # Main bot logic
-│   └── package.json # Dependencies
+│   ├── index.mjs    # Main bot logic (natural language parsing, ICS generation)
+│   └── package.json # Dependencies (chrono-node, ics, AWS SDK)
 ├── cdk/             # Infrastructure as Code
-│   ├── lib/         # CDK stack definitions
+│   ├── lib/         # CDK stack definitions (no S3!)
 │   └── package.json # CDK dependencies
 └── .github/
     └── workflows/
         └── deploy.yml # CI/CD pipeline
 ```
+
+### Key Features Implemented
+- **Advanced Date Parsing:** Handles 12-hour, 24-hour, dot notation, relative times
+- **ICS Document Sending:** Direct Telegram document API integration
+- **Timezone Handling:** Consistent local time across Google Calendar and ICS files
+- **Group Support:** Admin controls, blacklist/whitelist, per-group settings
 
 ### Local Development
 ```bash
@@ -267,9 +288,12 @@ aws logs tail /aws/lambda/TelegramSchedulerBotStack-TelegramBotFunction --follow
 
 **Testing:**
 - **Basic:** Send `/start` to your bot
-- **Date parsing:** Try "Meeting tomorrow 2pm"
-- **Timezone:** Try "Call 29th 5am" (uses current month)
-- **All-day:** Try "Conference Friday" (no time = all-day)
+- **12-hour time:** "Meeting tomorrow 2pm"
+- **24-hour time:** "Standup 1630" or "Call 09:30"
+- **Dot notation:** "Lunch 12.30pm"
+- **Timezone:** "Call 29th 5am" (uses current month)
+- **All-day:** "Conference Friday" (no time = all-day)
+- **ICS files:** Should appear as tappable documents in chat
 
 ## 💰 Cost Breakdown
 
@@ -277,11 +301,12 @@ aws logs tail /aws/lambda/TelegramSchedulerBotStack-TelegramBotFunction --follow
 - **Lambda:** $0.003 (requests + compute time)
 - **API Gateway:** $0.004 (HTTP requests)
 - **DynamoDB:** $0.0006 (storage + reads/writes)
-- **S3:** $0.001 (storage + requests)
 - **Secrets Manager:** $0.40 (secret storage)
-- **Total:** ~$0.41/month
+- **Total:** ~$0.408/month
 
 **Scaling:** Costs scale linearly with usage. 10,000 messages ≈ $4/month.
+
+**Cost Savings:** Removed S3 saves ~$0.001/month and simplifies architecture.
 
 ## 🔒 Security Features
 
@@ -290,7 +315,7 @@ aws logs tail /aws/lambda/TelegramSchedulerBotStack-TelegramBotFunction --follow
 - **Encrypted storage** - All data encrypted at rest with AWS KMS
 - **IAM permissions** - Lambda has minimal required permissions only
 - **HTTPS only** - All API communication over TLS
-- **Temporary URLs** - Calendar file URLs expire after 1 hour
+- **No file storage** - ICS files sent directly via Telegram, no persistent storage
 
 **Security Note:**
 This repository previously contained an exposed API token in commit history. The token has been revoked and replaced. All secrets are now properly stored in AWS Secrets Manager.
