@@ -136,230 +136,110 @@ function parseDateTime(text, timezone) {
   // Use safe timezone - fallback to Singapore if invalid
   const safeTimezone = isValidTimezone(timezone) ? timezone : 'Asia/Singapore';
   
-  // Convert dot notation to colon notation for better parsing
-  let cleanedText = text.replace(/(\d{1,2})\.(\d{2})(am|pm)/gi, '$1:$2$3');
-  
-  // Try to extract just the first time from ranges like "3:30pm-4:30pm"
-  const timeRangeMatch = cleanedText.match(/(\d{1,2}):?(\d{2})?(am|pm)\s*[-–]\s*(\d{1,2}):?(\d{2})?(am|pm)/i);
-  if (timeRangeMatch) {
-    // Replace the range with just the start time
-    const startTime = `${timeRangeMatch[1]}${timeRangeMatch[2] ? ':' + timeRangeMatch[2] : ''}${timeRangeMatch[3]}`;
-    cleanedText = cleanedText.replace(timeRangeMatch[0], startTime);
-  }
-  
   console.log('Original text:', text);
-  console.log('Cleaned text:', cleanedText);
   
-  // First try chrono-node's natural parsing
-  let results = chrono.parse(cleanedText, now, { timezone: safeTimezone });
+  // ONLY look for specific date patterns - no relative dates or random numbers
+  let results = [];
   
-  console.log('Chrono results:', results.length > 0 ? results[0].start.date().toISOString() : 'No results');
-  
-  // If chrono found results, use them unless they seem wrong
-  if (results.length > 0) {
-    const result = results[0];
-    // Only override chrono if it found today's date but we have a specific day pattern
-    const dayPattern = /(\d{1,2})(st|nd|rd|th)/i;
-    const dayMatch = text.match(dayPattern);
+  // Look for specific date patterns with optional time
+  // Pattern 1: "28th" or "28th 5pm" 
+  const dayOnlyMatch = text.match(/(\d{1,2})(st|nd|rd|th)(?:\s+(\d{1,2})(?:[:.](\d{2}))?(am|pm)?)?/i);
+  if (dayOnlyMatch) {
+    const day = parseInt(dayOnlyMatch[1]);
+    const hour = dayOnlyMatch[3] ? parseInt(dayOnlyMatch[3]) : null;
+    const minutes = dayOnlyMatch[4] ? parseInt(dayOnlyMatch[4]) : 0;
+    const ampm = dayOnlyMatch[5] ? dayOnlyMatch[5].toLowerCase() : null;
     
-    if (dayMatch && result.start.date().getDate() === now.getDate() && result.start.date().getMonth() === now.getMonth()) {
-      // Chrono might have defaulted to today when user meant a specific day, try our fallback
-      results = [];
-    } else {
-      // Chrono found a good result, use it
-      return results[0];
-    }
-  }
-  
-  // Fallback for 24-hour time format like "1630", "16:30", "0900"
-  if (results.length === 0) {
-    const militaryTimeMatch = text.match(/\b(\d{1,2}):?(\d{2})\b/);
-    if (militaryTimeMatch) {
-      const hour = parseInt(militaryTimeMatch[1]);
-      const minutes = parseInt(militaryTimeMatch[2]);
+    // Validate day is reasonable (1-31)
+    if (day >= 1 && day <= 31) {
+      console.log('Found day pattern:', { day, hour, minutes, ampm });
       
-      // Only process if it looks like a valid time (hour 0-23, minutes 0-59)
-      if (hour >= 0 && hour <= 23 && minutes >= 0 && minutes <= 59) {
-        console.log('Found 24-hour time:', { hour, minutes });
+      const currentMonth = now.getMonth();
+      const currentYear = now.getFullYear();
+      
+      let targetDate;
+      if (hour !== null) {
+        // Has time component
+        let hour24 = hour;
+        if (ampm === 'pm' && hour !== 12) hour24 += 12;
+        if (ampm === 'am' && hour === 12) hour24 = 0;
         
-        const targetDate = new Date(now);
-        if (text.toLowerCase().includes('tmr') || text.toLowerCase().includes('tomorrow')) {
-          targetDate.setDate(targetDate.getDate() + 1);
-        }
-        targetDate.setHours(hour, minutes, 0, 0);
-        
-        console.log('24-hour target date:', targetDate.toISOString());
-        
-        results = [{
-          index: militaryTimeMatch.index,
-          text: militaryTimeMatch[0],
-          start: {
-            date: () => targetDate,
-            knownValues: { 
-              year: targetDate.getFullYear(), 
-              month: targetDate.getMonth() + 1, 
-              day: targetDate.getDate(),
-              hour: hour, 
-              minute: minutes 
-            }
-          }
-        }];
+        targetDate = new Date(currentYear, currentMonth, day, hour24, minutes);
+      } else {
+        // Date only - all day event
+        targetDate = new Date(currentYear, currentMonth, day);
       }
-    }
-  }
-  
-  // Fallback for dot notation times like "3.30pm"
-  if (results.length === 0) {
-    const dotTimeMatch = text.match(/(\d{1,2})\.(\d{2})(am|pm)/i);
-    if (dotTimeMatch) {
-      console.log('Found dot time match:', dotTimeMatch);
-      const hour = parseInt(dotTimeMatch[1]);
-      const minutes = parseInt(dotTimeMatch[2]);
-      const ampm = dotTimeMatch[3].toLowerCase();
-      
-      console.log('Parsed time:', { hour, minutes, ampm });
-      
-      // Convert to 24-hour format
-      let hour24 = hour;
-      if (ampm === 'pm' && hour !== 12) hour24 += 12;
-      if (ampm === 'am' && hour === 12) hour24 = 0;
-      
-      console.log('24-hour format:', hour24);
-      
-      // Create target date for tomorrow if "tmr" is in text
-      const targetDate = new Date(now);
-      if (text.toLowerCase().includes('tmr') || text.toLowerCase().includes('tomorrow')) {
-        targetDate.setDate(targetDate.getDate() + 1);
-      }
-      // Set time in local timezone, not UTC
-      targetDate.setHours(hour24, minutes, 0, 0);
-      
-      console.log('Final target date:', targetDate.toISOString());
       
       results = [{
-        index: dotTimeMatch.index,
-        text: dotTimeMatch[0],
+        index: dayOnlyMatch.index,
+        text: dayOnlyMatch[0],
         start: {
           date: () => targetDate,
           knownValues: { 
-            year: targetDate.getFullYear(), 
-            month: targetDate.getMonth() + 1, 
-            day: targetDate.getDate(),
-            hour: hour24, 
-            minute: minutes 
+            year: currentYear, 
+            month: currentMonth + 1, 
+            day, 
+            hour: hour !== null ? (ampm === 'pm' && hour !== 12 ? hour + 12 : (ampm === 'am' && hour === 12 ? 0 : hour)) : undefined,
+            minute: hour !== null ? minutes : undefined
           }
         }
       }];
     }
   }
   
-  // Fallback for day patterns like "29th 5am"
+  // Pattern 2: "28 Oct" or "Oct 28" or "28 October"
   if (results.length === 0) {
-    // More precise regex for day + time patterns (supports both : and . notation)
-    const dayTimeMatch = text.match(/(\d{1,2})(st|nd|rd|th)\s+(\d{1,2})([:.:]\d{2})?(am|pm)/i);
-    
-    if (dayTimeMatch) {
-      const day = parseInt(dayTimeMatch[1]);
-      const hour = parseInt(dayTimeMatch[3]);
-      const ampm = dayTimeMatch[5].toLowerCase();
-      const minutes = dayTimeMatch[4] ? parseInt(dayTimeMatch[4].replace(/[:.]/g, '')) : 0;
+    const monthDayMatch = text.match(/\b(?:(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)|(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}))(?:\s+(\d{1,2})(?:[:.](\d{2}))?(am|pm)?)?/i);
+    if (monthDayMatch) {
+      const day = parseInt(monthDayMatch[1] || monthDayMatch[4]);
+      const monthStr = (monthDayMatch[2] || monthDayMatch[3]).toLowerCase();
+      const hour = monthDayMatch[5] ? parseInt(monthDayMatch[5]) : null;
+      const minutes = monthDayMatch[6] ? parseInt(monthDayMatch[6]) : 0;
+      const ampm = monthDayMatch[7] ? monthDayMatch[7].toLowerCase() : null;
       
-      console.log('Matched day+time:', { day, hour, ampm, minutes });
+      const monthMap = {
+        'jan': 0, 'january': 0, 'feb': 1, 'february': 1, 'mar': 2, 'march': 2,
+        'apr': 3, 'april': 3, 'may': 4, 'jun': 5, 'june': 5,
+        'jul': 6, 'july': 6, 'aug': 7, 'august': 7, 'sep': 8, 'september': 8,
+        'oct': 9, 'october': 9, 'nov': 10, 'november': 10, 'dec': 11, 'december': 11
+      };
       
-      // Convert to 24-hour format
-      let hour24 = hour;
-      if (ampm === 'pm' && hour !== 12) hour24 += 12;
-      if (ampm === 'am' && hour === 12) hour24 = 0;
-      
-      console.log('Converted to 24h:', hour24);
-      
-      // Get current month and year
-      const currentMonth = now.getMonth(); // 0-based month
-      const currentYear = now.getFullYear();
-      
-      // Create date object in local time
-      const targetDate = new Date(currentYear, currentMonth, day, hour24, minutes);
-      console.log('Created target date:', targetDate.toISOString());
-      
-      // Create a mock chrono result
-      results = [{
-        index: dayTimeMatch.index,
-        text: dayTimeMatch[0],
-        start: {
-          date: () => targetDate,
-          knownValues: { year: currentYear, month: currentMonth + 1, day, hour: hour24, minute: minutes }
-        }
-      }];
-    }
-    
-    // Try day-only patterns like "29th"
-    if (results.length === 0) {
-      const dayOnlyMatch = text.match(/(\d{1,2})(st|nd|rd|th)(?!\s*\d)/i);
-      if (dayOnlyMatch) {
-        const day = parseInt(dayOnlyMatch[1]);
-        const currentMonth = now.toLocaleString('en-US', { month: 'long', timeZone: safeTimezone });
+      const month = monthMap[monthStr];
+      if (month !== undefined && day >= 1 && day <= 31) {
+        console.log('Found month-day pattern:', { day, month, hour, minutes, ampm });
+        
         const currentYear = now.getFullYear();
         
-        const dateStr = `${currentMonth} ${day}, ${currentYear}`;
-        console.log('Parsing day-only pattern:', dateStr);
-        
-        const fallbackResults = chrono.parse(dateStr, now, { timezone: safeTimezone });
-        if (fallbackResults.length > 0) {
-          results = fallbackResults;
+        let targetDate;
+        if (hour !== null) {
+          let hour24 = hour;
+          if (ampm === 'pm' && hour !== 12) hour24 += 12;
+          if (ampm === 'am' && hour === 12) hour24 = 0;
+          
+          targetDate = new Date(currentYear, month, day, hour24, minutes);
+        } else {
+          targetDate = new Date(currentYear, month, day);
         }
-      }
-    }
-    
-    // Fallback for relative time patterns like "1 minute", "30 min", "50mins"
-    if (results.length === 0) {
-      const relativeTimeMatch = text.match(/(\d+)\s*(min|mins|minute|minutes|hour|hours|hr|hrs)\b/i);
-      if (relativeTimeMatch) {
-        const amount = parseInt(relativeTimeMatch[1]);
-        const unit = relativeTimeMatch[2].toLowerCase();
-        
-        let minutes = 0;
-        if (unit.startsWith('min')) {
-          minutes = amount;
-        } else if (unit.startsWith('h')) {
-          minutes = amount * 60;
-        }
-        
-        const targetDate = new Date(now.getTime() + minutes * 60000);
-        console.log('Parsed relative time:', { amount, unit, minutes, targetDate: targetDate.toISOString() });
         
         results = [{
-          index: relativeTimeMatch.index,
-          text: relativeTimeMatch[0],
+          index: monthDayMatch.index,
+          text: monthDayMatch[0],
           start: {
             date: () => targetDate,
             knownValues: { 
-              year: targetDate.getFullYear(), 
-              month: targetDate.getMonth() + 1, 
-              day: targetDate.getDate(),
-              hour: targetDate.getHours(), 
-              minute: targetDate.getMinutes() 
+              year: currentYear, 
+              month: month + 1, 
+              day,
+              hour: hour !== null ? (ampm === 'pm' && hour !== 12 ? hour + 12 : (ampm === 'am' && hour === 12 ? 0 : hour)) : undefined,
+              minute: hour !== null ? minutes : undefined
             }
           }
         }];
       }
     }
-    
-    // Fallback for standalone weekdays
-    if (results.length === 0) {
-      const weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-      const lowerText = text.toLowerCase();
-      
-      for (const day of weekdays) {
-        if (lowerText.includes(day)) {
-          const fallbackResults = chrono.parse(`this ${day}`, now, { timezone: safeTimezone });
-          if (fallbackResults.length > 0) {
-            results = fallbackResults;
-            break;
-          }
-        }
-      }
-    }
   }
+  
+  // No more fallbacks - only specific date patterns allowed
   
   return results.length > 0 ? results[0] : null;
 }
