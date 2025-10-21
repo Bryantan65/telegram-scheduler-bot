@@ -171,6 +171,43 @@ function parseDateTime(text, timezone) {
     }
   }
   
+  // Fallback for 24-hour time format like "1630", "16:30", "0900"
+  if (results.length === 0) {
+    const militaryTimeMatch = text.match(/\b(\d{1,2}):?(\d{2})\b/);
+    if (militaryTimeMatch) {
+      const hour = parseInt(militaryTimeMatch[1]);
+      const minutes = parseInt(militaryTimeMatch[2]);
+      
+      // Only process if it looks like a valid time (hour 0-23, minutes 0-59)
+      if (hour >= 0 && hour <= 23 && minutes >= 0 && minutes <= 59) {
+        console.log('Found 24-hour time:', { hour, minutes });
+        
+        const targetDate = new Date(now);
+        if (text.toLowerCase().includes('tmr') || text.toLowerCase().includes('tomorrow')) {
+          targetDate.setDate(targetDate.getDate() + 1);
+        }
+        targetDate.setHours(hour, minutes, 0, 0);
+        
+        console.log('24-hour target date:', targetDate.toISOString());
+        
+        results = [{
+          index: militaryTimeMatch.index,
+          text: militaryTimeMatch[0],
+          start: {
+            date: () => targetDate,
+            knownValues: { 
+              year: targetDate.getFullYear(), 
+              month: targetDate.getMonth() + 1, 
+              day: targetDate.getDate(),
+              hour: hour, 
+              minute: minutes 
+            }
+          }
+        }];
+      }
+    }
+  }
+  
   // Fallback for dot notation times like "3.30pm"
   if (results.length === 0) {
     const dotTimeMatch = text.match(/(\d{1,2})\.(\d{2})(am|pm)/i);
