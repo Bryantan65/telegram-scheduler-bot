@@ -439,15 +439,15 @@ async function handleMessage(message) {
         timeZone: prefs.timezone
       }) + ' (All day)';
     } else {
-      // Create a new date in the user's timezone to avoid UTC conversion issues
-      const localDate = new Date(start.getTime());
-      whenText = localDate.toLocaleString('en-US', {
+      // Format time in user's timezone
+      whenText = start.toLocaleString('en-US', {
         weekday: 'short',
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
-        hour12: true
+        hour12: true,
+        timeZone: prefs.timezone
       }) + ` (${prefs.duration_min}min)`;
     }
     
