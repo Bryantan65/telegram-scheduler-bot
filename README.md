@@ -489,7 +489,7 @@ Replica Regions: None
 **Secret Structure:**
 ```json
 {
-  "BOT_TOKEN": "8299368028:AAGyPSjr3glhEpGcLwwOo-TrPIHbXOyyT7k"
+  "BOT_TOKEN": "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789"
 }
 ```
 
