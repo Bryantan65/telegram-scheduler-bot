@@ -302,13 +302,26 @@ function extractTitle(text, dateMatch) {
   
   // Find all date/time patterns in the text to remove them
   const patterns = [
-    /(\d{1,2})(st|nd|rd|th)\s+(\d{1,2})(:\d{2})?(am|pm)/gi, // "29th 5am"
-    /(\d{1,2})(st|nd|rd|th)/gi, // "29th"
-    /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, // weekdays
-    /\b(tomorrow|tmr|today)\b/gi, // relative days
-    /\b\d{1,2}([:.:]\d{2})?(am|pm)\b/gi, // standalone times
-    /\b\d+\s*(min|mins|minute|minutes|hour|hours|hr|hrs)\b/gi, // relative time
-    /\d{1,2}[.:]?\d{0,2}(am|pm)\s*[-–]\s*\d{1,2}[.:]?\d{0,2}(am|pm)/gi // time ranges
+    // Month-day patterns
+    /\b\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\b/gi,
+    /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}\b/gi,
+    // Day with ordinals
+    /(\d{1,2})(st|nd|rd|th)/gi,
+    // Time ranges with various formats
+    /\bfrom\s+\d{1,2}[.:]?\d{0,2}\s?(am|pm)?\s+to\s+\d{1,2}[.:]?\d{0,2}\s?(am|pm)?\b/gi,
+    /\d{1,2}[.:]?\d{0,2}\s?(am|pm)?\s*[-–]\s*\d{1,2}[.:]?\d{0,2}\s?(am|pm)?/gi,
+    // Standalone times
+    /\b\d{1,2}[.:]\d{2}\s?(am|pm)\b/gi,
+    /\b\d{4}\s?(am|pm)\b/gi,
+    /\b\d{1,2}\s?(am|pm)\b/gi,
+    // Weekdays
+    /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi,
+    // Relative days
+    /\b(tomorrow|tmr|today|next|this)\b/gi,
+    // Duration words
+    /\b\d+\s*(min|mins|minute|minutes|hour|hours|hr|hrs)\b/gi,
+    // Common prepositions
+    /\b(at|on)\b/gi
   ];
   
   let cleanText = text;
@@ -318,10 +331,11 @@ function extractTitle(text, dateMatch) {
     cleanText = cleanText.replace(pattern, ' ');
   });
   
-  // Clean up extra spaces and common words
+  // Clean up extra spaces, commas, and common words
   cleanText = cleanText
+    .replace(/[,;]/g, ' ') // remove commas and semicolons
     .replace(/\s+/g, ' ') // multiple spaces to single
-    .replace(/\b(at|on|the|a|an)\b/gi, ' ') // common words
+    .replace(/\b(the|a|an|with)\b/gi, ' ') // common words
     .trim();
   
   // If nothing left, use fallback
