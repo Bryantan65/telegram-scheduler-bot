@@ -95,26 +95,42 @@ function isValidTimezone(timezone) {
 }
 
 async function sendTelegramMessage(chatId, text, replyMarkup = null) {
-  const token = await getBotToken();
-  const url = `https://api.telegram.org/bot${token}/sendMessage`;
-  
-  const body = {
-    chat_id: chatId,
-    text: text,
-    parse_mode: 'HTML'
-  };
-  
-  if (replyMarkup) {
-    body.reply_markup = replyMarkup;
+  try {
+    const token = await getBotToken();
+    console.log('Bot token retrieved:', token ? 'Yes' : 'No');
+    
+    const url = `https://api.telegram.org/bot${token}/sendMessage`;
+    
+    const body = {
+      chat_id: chatId,
+      text: text,
+      parse_mode: 'HTML'
+    };
+    
+    if (replyMarkup) {
+      body.reply_markup = replyMarkup;
+    }
+    
+    console.log('Sending message to Telegram:', { chatId, textLength: text.length });
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    
+    const result = await response.json();
+    console.log('Telegram API response:', { ok: result.ok, status: response.status });
+    
+    if (!result.ok) {
+      console.error('Telegram API error:', result);
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('Error sending Telegram message:', error);
+    throw error;
   }
-  
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  
-  return response.json();
 }
 
 function parseDateTime(text, timezone) {
@@ -703,9 +719,9 @@ async function handleMessage(message) {
   if (dateMatch.start.knownValues.hour !== undefined) {
     const targetHour = dateMatch.start.knownValues.hour;
     const targetMinute = dateMatch.start.knownValues.minute || 0;
-    const targetDay = dateMatch.start.knownValues.day;
-    const targetMonth = dateMatch.start.knownValues.month - 1;
-    const targetYear = dateMatch.start.knownValues.year;
+    const targetDay = dateMatch.start.knownValues.day || start.getDate();
+    const targetMonth = (dateMatch.start.knownValues.month || start.getMonth() + 1) - 1;
+    const targetYear = dateMatch.start.knownValues.year || start.getFullYear();
     
     // Create date in local time - this represents the user's intended time
     start = new Date(targetYear, targetMonth, targetDay, targetHour, targetMinute);
