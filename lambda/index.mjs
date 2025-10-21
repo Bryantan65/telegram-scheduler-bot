@@ -204,20 +204,13 @@ function parseDateTime(text, timezone) {
     }
   }
   
-  // Pattern 2: "28 Oct" or "Oct 28" or "28 October" with time like "23 oct 11:30am" or "23 oct 1130 am"
+  // Pattern 2: "28 Oct" or "Oct 28" with comprehensive time patterns
   if (results.length === 0) {
-    const monthDayMatch = text.match(/\b(?:(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)|(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}))(?:\s+(\d{1,2})(?:[:.]?(\d{2}))?\s?(am|pm))?/i);
-    if (monthDayMatch) {
-      const day = parseInt(monthDayMatch[1] || monthDayMatch[4]);
-      const monthStr = (monthDayMatch[2] || monthDayMatch[3]).toLowerCase();
-      let hour = null;
-      let minutes = 0;
-      const ampm = monthDayMatch[7] ? monthDayMatch[7].toLowerCase() : null;
-      
-      if (monthDayMatch[5]) {
-        hour = parseInt(monthDayMatch[5]);
-        minutes = monthDayMatch[6] ? parseInt(monthDayMatch[6]) : 0;
-      }
+    const dateOnlyMatch = text.match(/\b(?:(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)|(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}))/i);
+    
+    if (dateOnlyMatch) {
+      const day = parseInt(dateOnlyMatch[1] || dateOnlyMatch[4]);
+      const monthStr = (dateOnlyMatch[2] || dateOnlyMatch[3]).toLowerCase();
       
       const monthMap = {
         'jan': 0, 'january': 0, 'feb': 1, 'february': 1, 'mar': 2, 'march': 2,
@@ -228,12 +221,50 @@ function parseDateTime(text, timezone) {
       
       const month = monthMap[monthStr];
       if (month !== undefined && day >= 1 && day <= 31) {
+        // Look for comprehensive time patterns anywhere in the text
+        const timePatterns = [
+          // Time ranges: "1030-1130am", "10:30 - 11:30am", "10.30-11.30 am"
+          /(\d{1,2})(?:[:.]?(\d{2}))?\s*[-–]\s*(\d{1,2})(?:[:.]?(\d{2}))?\s?(am|pm)/i,
+          // 4-digit times: "1030am", "1030 am"
+          /(\d{4})\s?(am|pm)/i,
+          // Standard times: "10:30am", "10.30am", "10 am"
+          /(\d{1,2})(?:[:.]?(\d{2}))?\s?(am|pm)/i
+        ];
+        
+        let hour = null;
+        let minutes = 0;
+        let ampm = null;
+        
+        for (const pattern of timePatterns) {
+          const timeMatch = text.match(pattern);
+          if (timeMatch) {
+            if (pattern === timePatterns[0]) {
+              // Time range - use start time
+              hour = parseInt(timeMatch[1]);
+              minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+              ampm = timeMatch[5] ? timeMatch[5].toLowerCase() : null;
+            } else if (pattern === timePatterns[1]) {
+              // 4-digit time
+              const timeStr = timeMatch[1];
+              hour = parseInt(timeStr.substring(0, 2));
+              minutes = parseInt(timeStr.substring(2));
+              ampm = timeMatch[2] ? timeMatch[2].toLowerCase() : null;
+            } else {
+              // Standard time
+              hour = parseInt(timeMatch[1]);
+              minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+              ampm = timeMatch[3] ? timeMatch[3].toLowerCase() : null;
+            }
+            break;
+          }
+        }
+        
         console.log('Found month-day pattern:', { day, month, hour, minutes, ampm });
         
         const currentYear = now.getFullYear();
         
         let targetDate;
-        if (hour !== null) {
+        if (hour !== null && ampm) {
           let hour24 = hour;
           if (ampm === 'pm' && hour !== 12) hour24 += 12;
           if (ampm === 'am' && hour === 12) hour24 = 0;
@@ -244,16 +275,16 @@ function parseDateTime(text, timezone) {
         }
         
         results = [{
-          index: monthDayMatch.index,
-          text: monthDayMatch[0],
+          index: dateOnlyMatch.index,
+          text: dateOnlyMatch[0],
           start: {
             date: () => targetDate,
             knownValues: { 
               year: currentYear, 
               month: month + 1, 
               day,
-              hour: hour !== null ? (ampm === 'pm' && hour !== 12 ? hour + 12 : (ampm === 'am' && hour === 12 ? 0 : hour)) : undefined,
-              minute: hour !== null ? minutes : undefined
+              hour: hour !== null && ampm ? (ampm === 'pm' && hour !== 12 ? hour + 12 : (ampm === 'am' && hour === 12 ? 0 : hour)) : undefined,
+              minute: hour !== null && ampm ? minutes : undefined
             }
           }
         }];
