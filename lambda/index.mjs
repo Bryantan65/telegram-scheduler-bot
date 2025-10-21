@@ -85,6 +85,15 @@ async function addBotAdmin(groupId, userId) {
   }
 }
 
+function isValidTimezone(timezone) {
+  try {
+    new Date().toLocaleString('en-US', { timeZone: timezone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function sendTelegramMessage(chatId, text, replyMarkup = null) {
   const token = await getBotToken();
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
@@ -111,8 +120,20 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
 function parseDateTime(text, timezone) {
   const now = new Date();
   
+  // Use safe timezone - fallback to Singapore if invalid
+  const safeTimezone = isValidTimezone(timezone) ? timezone : 'Asia/Singapore';
+  
+  // Try to extract just the first time from ranges like "3.30pm-4.30pm"
+  const timeRangeMatch = text.match(/(\d{1,2})[.:]?(\d{2})?(am|pm)\s*[-–]\s*(\d{1,2})[.:]?(\d{2})?(am|pm)/i);
+  let cleanedText = text;
+  if (timeRangeMatch) {
+    // Replace the range with just the start time
+    const startTime = `${timeRangeMatch[1]}${timeRangeMatch[2] ? ':' + timeRangeMatch[2] : ''}${timeRangeMatch[3]}`;
+    cleanedText = text.replace(timeRangeMatch[0], startTime);
+  }
+  
   // First try chrono-node's natural parsing
-  let results = chrono.parse(text, now, { timezone });
+  let results = chrono.parse(cleanedText, now, { timezone: safeTimezone });
   
   // If chrono found results, use them unless they seem wrong
   if (results.length > 0) {
@@ -132,14 +153,14 @@ function parseDateTime(text, timezone) {
   
   // Fallback for day patterns like "29th 5am"
   if (results.length === 0) {
-    // More precise regex for day + time patterns
-    const dayTimeMatch = text.match(/(\d{1,2})(st|nd|rd|th)\s+(\d{1,2})(:\d{2})?(am|pm)/i);
+    // More precise regex for day + time patterns (supports both : and . notation)
+    const dayTimeMatch = text.match(/(\d{1,2})(st|nd|rd|th)\s+(\d{1,2})([:.:]\d{2})?(am|pm)/i);
     
     if (dayTimeMatch) {
       const day = parseInt(dayTimeMatch[1]);
       const hour = parseInt(dayTimeMatch[3]);
       const ampm = dayTimeMatch[5].toLowerCase();
-      const minutes = dayTimeMatch[4] ? parseInt(dayTimeMatch[4].substring(1)) : 0;
+      const minutes = dayTimeMatch[4] ? parseInt(dayTimeMatch[4].replace(/[:.]/g, '')) : 0;
       
       console.log('Matched day+time:', { day, hour, ampm, minutes });
       
@@ -174,13 +195,13 @@ function parseDateTime(text, timezone) {
       const dayOnlyMatch = text.match(/(\d{1,2})(st|nd|rd|th)(?!\s*\d)/i);
       if (dayOnlyMatch) {
         const day = parseInt(dayOnlyMatch[1]);
-        const currentMonth = now.toLocaleString('en-US', { month: 'long', timeZone: timezone });
+        const currentMonth = now.toLocaleString('en-US', { month: 'long', timeZone: safeTimezone });
         const currentYear = now.getFullYear();
         
         const dateStr = `${currentMonth} ${day}, ${currentYear}`;
         console.log('Parsing day-only pattern:', dateStr);
         
-        const fallbackResults = chrono.parse(dateStr, now, { timezone });
+        const fallbackResults = chrono.parse(dateStr, now, { timezone: safeTimezone });
         if (fallbackResults.length > 0) {
           results = fallbackResults;
         }
@@ -228,7 +249,7 @@ function parseDateTime(text, timezone) {
       
       for (const day of weekdays) {
         if (lowerText.includes(day)) {
-          const fallbackResults = chrono.parse(`this ${day}`, now, { timezone });
+          const fallbackResults = chrono.parse(`this ${day}`, now, { timezone: safeTimezone });
           if (fallbackResults.length > 0) {
             results = fallbackResults;
             break;
@@ -250,8 +271,9 @@ function extractTitle(text, dateMatch) {
     /(\d{1,2})(st|nd|rd|th)/gi, // "29th"
     /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, // weekdays
     /\b(tomorrow|tmr|today)\b/gi, // relative days
-    /\b\d{1,2}(:\d{2})?(am|pm)\b/gi, // standalone times
-    /\b\d+\s*(min|mins|minute|minutes|hour|hours|hr|hrs)\b/gi // relative time
+    /\b\d{1,2}([:.:]\d{2})?(am|pm)\b/gi, // standalone times
+    /\b\d+\s*(min|mins|minute|minutes|hour|hours|hr|hrs)\b/gi, // relative time
+    /\d{1,2}[.:]?\d{0,2}(am|pm)\s*[-–]\s*\d{1,2}[.:]?\d{0,2}(am|pm)/gi // time ranges
   ];
   
   let cleanText = text;
@@ -417,7 +439,7 @@ async function handleCommand(message) {
         `• "Doctor appointment next Friday 10:30am"\n` +
         `• "Project sync 25 Oct 2pm"\n\n` +
         `<b>Commands:</b>\n` +
-        `/tz &lt;timezone&gt; - Set your timezone (default: Asia/Singapore)\n` +
+        `/tz &lt;timezone&gt; - Set your timezone (default: Singapore)\n` +
         `/duration &lt;minutes&gt; - Set default event duration (default: 60min)\n` +
         `/blacklist &lt;word&gt; - Add/remove words from blacklist\n` +
         `/whitelist &lt;word&gt; - Add/remove words from whitelist\n` +
@@ -432,7 +454,15 @@ async function handleCommand(message) {
     case '/tz':
       if (parts.length < 2) {
         const scope = isGroup ? 'group' : 'your';
-        await sendTelegramMessage(chat.id, `Usage: /tz Asia/Singapore\nSets ${scope} timezone`);
+        await sendTelegramMessage(chat.id, 
+          `Usage: /tz <timezone>\nSets ${scope} timezone\n\n` +
+          `<b>Examples:</b>\n` +
+          `• /tz Asia/Singapore (Singapore Time)\n` +
+          `• /tz America/New_York (Eastern Time)\n` +
+          `• /tz America/Los_Angeles (Pacific Time)\n` +
+          `• /tz Europe/London (GMT/BST)\n` +
+          `• /tz Australia/Sydney (AEST/AEDT)`
+        );
         return;
       }
       
@@ -442,6 +472,24 @@ async function handleCommand(message) {
       }
       
       const timezone = parts.slice(1).join(' ');
+      
+      if (!isValidTimezone(timezone)) {
+        await sendTelegramMessage(chat.id, 
+          `❌ Invalid timezone: "${timezone}"\n\n` +
+          `<b>Valid timezone examples:</b>\n` +
+          `• Asia/Singapore (Singapore Time)\n` +
+          `• America/New_York (Eastern Time)\n` +
+          `• America/Los_Angeles (Pacific Time)\n` +
+          `• America/Chicago (Central Time)\n` +
+          `• Europe/London (GMT/BST)\n` +
+          `• Europe/Paris (CET/CEST)\n` +
+          `• Asia/Tokyo (JST)\n` +
+          `• Australia/Sydney (AEST/AEDT)\n\n` +
+          `Use format: Continent/City`
+        );
+        return;
+      }
+      
       const prefs = await getUserPrefs(prefId);
       prefs.timezone = timezone;
       await saveUserPrefs(prefId, prefs);
@@ -617,13 +665,15 @@ async function handleMessage(message) {
   try {
     const icsUrl = await createIcsFile(event);
     
+    const safeTimezone = isValidTimezone(prefs.timezone) ? prefs.timezone : 'Asia/Singapore';
+    
     let whenText;
     if (event.allDay) {
       whenText = start.toLocaleDateString('en-US', {
         weekday: 'long',
         month: 'short',
         day: 'numeric',
-        timeZone: prefs.timezone
+        timeZone: safeTimezone
       }) + ' (All day)';
     } else {
       // Format time in user's timezone
@@ -634,12 +684,12 @@ async function handleMessage(message) {
         hour: '2-digit',
         minute: '2-digit',
         hour12: true,
-        timeZone: prefs.timezone
+        timeZone: safeTimezone
       }) + ` (${prefs.duration_min}min)`;
     }
     
     // Create Google Calendar URL
-    const googleUrl = createGoogleCalendarUrl(event, prefs.timezone);
+    const googleUrl = createGoogleCalendarUrl(event, safeTimezone);
     
     const createdBy = isGroup ? `\n<b>Created by:</b> ${from.first_name || from.username || 'Unknown'}` : '';
     
