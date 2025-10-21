@@ -33,10 +33,11 @@ async function getUserPrefs(userId) {
       timezone: response.Item.timezone?.S || 'Asia/Singapore',
       duration_min: parseInt(response.Item.duration_min?.N || '60'),
       bot_admins: response.Item.bot_admins?.SS || [],
-      blacklist: response.Item.blacklist?.SS || ['now']
-    } : { timezone: 'Asia/Singapore', duration_min: 60, bot_admins: [], blacklist: ['now'] };
+      blacklist: response.Item.blacklist?.SS || ['now'],
+      whitelist: response.Item.whitelist?.SS || []
+    } : { timezone: 'Asia/Singapore', duration_min: 60, bot_admins: [], blacklist: ['now'], whitelist: [] };
   } catch (error) {
-    return { timezone: 'Asia/Singapore', duration_min: 60, bot_admins: [], blacklist: ['now'] };
+    return { timezone: 'Asia/Singapore', duration_min: 60, bot_admins: [], blacklist: ['now'], whitelist: [] };
   }
 }
 
@@ -48,7 +49,8 @@ async function saveUserPrefs(userId, prefs) {
       timezone: { S: prefs.timezone },
       duration_min: { N: prefs.duration_min.toString() },
       bot_admins: { SS: prefs.bot_admins || [] },
-      blacklist: { SS: prefs.blacklist || ['now'] }
+      blacklist: { SS: prefs.blacklist || ['now'] },
+      whitelist: { SS: prefs.whitelist || [] }
     }
   });
   
@@ -98,16 +100,19 @@ function parseDateTime(text, timezone) {
   // First try chrono-node's natural parsing
   let results = chrono.parse(text, now, { timezone });
   
-  // If chrono found results, check if they make sense
+  // If chrono found results, use them unless they seem wrong
   if (results.length > 0) {
     const result = results[0];
-    // If chrono found a date but it's today and we have a day pattern, try fallback
+    // Only override chrono if it found today's date but we have a specific day pattern
     const dayPattern = /(\d{1,2})(st|nd|rd|th)/i;
     const dayMatch = text.match(dayPattern);
     
-    if (dayMatch && result.start.date().getDate() === now.getDate()) {
-      // Chrono might have defaulted to today, try our fallback
+    if (dayMatch && result.start.date().getDate() === now.getDate() && result.start.date().getMonth() === now.getMonth()) {
+      // Chrono might have defaulted to today when user meant a specific day, try our fallback
       results = [];
+    } else {
+      // Chrono found a good result, use it
+      return results[0];
     }
   }
   
@@ -168,6 +173,40 @@ function parseDateTime(text, timezone) {
       }
     }
     
+    // Fallback for relative time patterns like "1 minute", "30 min", "50mins"
+    if (results.length === 0) {
+      const relativeTimeMatch = text.match(/(\d+)\s*(min|mins|minute|minutes|hour|hours|hr|hrs)\b/i);
+      if (relativeTimeMatch) {
+        const amount = parseInt(relativeTimeMatch[1]);
+        const unit = relativeTimeMatch[2].toLowerCase();
+        
+        let minutes = 0;
+        if (unit.startsWith('min')) {
+          minutes = amount;
+        } else if (unit.startsWith('h')) {
+          minutes = amount * 60;
+        }
+        
+        const targetDate = new Date(now.getTime() + minutes * 60000);
+        console.log('Parsed relative time:', { amount, unit, minutes, targetDate: targetDate.toISOString() });
+        
+        results = [{
+          index: relativeTimeMatch.index,
+          text: relativeTimeMatch[0],
+          start: {
+            date: () => targetDate,
+            knownValues: { 
+              year: targetDate.getFullYear(), 
+              month: targetDate.getMonth() + 1, 
+              day: targetDate.getDate(),
+              hour: targetDate.getHours(), 
+              minute: targetDate.getMinutes() 
+            }
+          }
+        }];
+      }
+    }
+    
     // Fallback for standalone weekdays
     if (results.length === 0) {
       const weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -197,7 +236,8 @@ function extractTitle(text, dateMatch) {
     /(\d{1,2})(st|nd|rd|th)/gi, // "29th"
     /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, // weekdays
     /\b(tomorrow|tmr|today)\b/gi, // relative days
-    /\b\d{1,2}(:\d{2})?(am|pm)\b/gi // standalone times
+    /\b\d{1,2}(:\d{2})?(am|pm)\b/gi, // standalone times
+    /\b\d+\s*(min|mins|minute|minutes|hour|hours|hr|hrs)\b/gi // relative time
   ];
   
   let cleanText = text;
@@ -465,6 +505,45 @@ async function handleCommand(message) {
       }
       break;
       
+    case '/whitelist':
+      if (parts.length < 2) {
+        const scope = isGroup ? 'group' : 'your';
+        const whitelist = await getUserPrefs(prefId);
+        await sendTelegramMessage(chat.id, `Current ${scope} whitelist: ${whitelist.whitelist.join(', ') || 'None'}\n\nUsage: /whitelist <word> to add/remove`);
+        return;
+      }
+      
+      if (isGroup && !(await isAdmin())) {
+        await sendTelegramMessage(chat.id, '❌ Only group admins can manage whitelist');
+        return;
+      }
+      
+      const whiteWord = parts[1].toLowerCase();
+      const whitelistPrefs = await getUserPrefs(prefId);
+      
+      if (whitelistPrefs.whitelist.includes(whiteWord)) {
+        whitelistPrefs.whitelist = whitelistPrefs.whitelist.filter(w => w !== whiteWord);
+        await saveUserPrefs(prefId, whitelistPrefs);
+        await sendTelegramMessage(chat.id, `✅ Removed "${whiteWord}" from whitelist`);
+      } else {
+        whitelistPrefs.whitelist.push(whiteWord);
+        await saveUserPrefs(prefId, whitelistPrefs);
+        await sendTelegramMessage(chat.id, `✅ Added "${whiteWord}" to whitelist`);
+      }
+      break;
+      
+    case '/showblacklist':
+      const blacklistData = await getUserPrefs(prefId);
+      const scope1 = isGroup ? 'Group' : 'Your';
+      await sendTelegramMessage(chat.id, `${scope1} blacklist: ${blacklistData.blacklist.join(', ')}`);
+      break;
+      
+    case '/showwhitelist':
+      const whitelistData = await getUserPrefs(prefId);
+      const scope2 = isGroup ? 'Group' : 'Your';
+      await sendTelegramMessage(chat.id, `${scope2} whitelist: ${whitelistData.whitelist.join(', ') || 'None'}`);
+      break;
+      
     default:
       await sendTelegramMessage(chat.id, 'Unknown command. Type /help for available commands.');
   }
@@ -485,10 +564,13 @@ async function handleMessage(message) {
   const prefId = isGroup ? chat.id.toString() : from.id.toString();
   const prefs = await getUserPrefs(prefId);
   
-  // Check if message contains blacklisted words
+  // Check blacklist/whitelist logic
   const lowerText = text.toLowerCase();
   const hasBlacklistedWord = prefs.blacklist.some(word => lowerText.includes(word));
-  if (hasBlacklistedWord) return;
+  const hasWhitelistedWord = prefs.whitelist.length > 0 && prefs.whitelist.some(word => lowerText.includes(word));
+  
+  // If word is blacklisted and not whitelisted, skip
+  if (hasBlacklistedWord && !hasWhitelistedWord) return;
   
   const dateMatch = parseDateTime(text, prefs.timezone);
   if (!dateMatch) return;
