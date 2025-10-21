@@ -75,20 +75,93 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
 }
 
 function parseDateTime(text, timezone) {
-  let results = chrono.parse(text, new Date(), { timezone });
+  const now = new Date();
   
-  // If no results, try fallback for standalone weekdays
-  if (results.length === 0) {
-    const weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-    const lowerText = text.toLowerCase();
+  // First try chrono-node's natural parsing
+  let results = chrono.parse(text, now, { timezone });
+  
+  // If chrono found results, check if they make sense
+  if (results.length > 0) {
+    const result = results[0];
+    // If chrono found a date but it's today and we have a day pattern, try fallback
+    const dayPattern = /(\d{1,2})(st|nd|rd|th)/i;
+    const dayMatch = text.match(dayPattern);
     
-    for (const day of weekdays) {
-      if (lowerText.includes(day)) {
-        // Parse as "this [weekday]"
-        const fallbackResults = chrono.parse(`this ${day}`, new Date(), { timezone });
+    if (dayMatch && result.start.date().getDate() === now.getDate()) {
+      // Chrono might have defaulted to today, try our fallback
+      results = [];
+    }
+  }
+  
+  // Fallback for day patterns like "29th 5am"
+  if (results.length === 0) {
+    // More precise regex for day + time patterns
+    const dayTimeMatch = text.match(/(\d{1,2})(st|nd|rd|th)\s+(\d{1,2})(:\d{2})?(am|pm)/i);
+    
+    if (dayTimeMatch) {
+      const day = parseInt(dayTimeMatch[1]);
+      const hour = parseInt(dayTimeMatch[3]);
+      const ampm = dayTimeMatch[5].toLowerCase();
+      const minutes = dayTimeMatch[4] ? parseInt(dayTimeMatch[4].substring(1)) : 0;
+      
+      console.log('Matched day+time:', { day, hour, ampm, minutes });
+      
+      // Convert to 24-hour format
+      let hour24 = hour;
+      if (ampm === 'pm' && hour !== 12) hour24 += 12;
+      if (ampm === 'am' && hour === 12) hour24 = 0;
+      
+      console.log('Converted to 24h:', hour24);
+      
+      // Get current month and year
+      const currentMonth = now.getMonth(); // 0-based month
+      const currentYear = now.getFullYear();
+      
+      // Create date object directly instead of parsing string
+      const targetDate = new Date(currentYear, currentMonth, day, hour24, minutes);
+      console.log('Created target date:', targetDate.toISOString());
+      
+      // Create a mock chrono result
+      results = [{
+        index: dayTimeMatch.index,
+        text: dayTimeMatch[0],
+        start: {
+          date: () => targetDate,
+          knownValues: { year: currentYear, month: currentMonth + 1, day, hour: hour24, minute: minutes }
+        }
+      }];
+    }
+    
+    // Try day-only patterns like "29th"
+    if (results.length === 0) {
+      const dayOnlyMatch = text.match(/(\d{1,2})(st|nd|rd|th)(?!\s*\d)/i);
+      if (dayOnlyMatch) {
+        const day = parseInt(dayOnlyMatch[1]);
+        const currentMonth = now.toLocaleString('en-US', { month: 'long', timeZone: timezone });
+        const currentYear = now.getFullYear();
+        
+        const dateStr = `${currentMonth} ${day}, ${currentYear}`;
+        console.log('Parsing day-only pattern:', dateStr);
+        
+        const fallbackResults = chrono.parse(dateStr, now, { timezone });
         if (fallbackResults.length > 0) {
           results = fallbackResults;
-          break;
+        }
+      }
+    }
+    
+    // Fallback for standalone weekdays
+    if (results.length === 0) {
+      const weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+      const lowerText = text.toLowerCase();
+      
+      for (const day of weekdays) {
+        if (lowerText.includes(day)) {
+          const fallbackResults = chrono.parse(`this ${day}`, now, { timezone });
+          if (fallbackResults.length > 0) {
+            results = fallbackResults;
+            break;
+          }
         }
       }
     }
@@ -100,11 +173,34 @@ function parseDateTime(text, timezone) {
 function extractTitle(text, dateMatch) {
   if (!dateMatch) return text.trim();
   
-  const beforeDate = text.substring(0, dateMatch.index).trim();
-  const afterDate = text.substring(dateMatch.index + dateMatch.text.length).trim();
+  // Find all date/time patterns in the text to remove them
+  const patterns = [
+    /(\d{1,2})(st|nd|rd|th)\s+(\d{1,2})(:\d{2})?(am|pm)/gi, // "29th 5am"
+    /(\d{1,2})(st|nd|rd|th)/gi, // "29th"
+    /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, // weekdays
+    /\b(tomorrow|tmr|today)\b/gi, // relative days
+    /\b\d{1,2}(:\d{2})?(am|pm)\b/gi // standalone times
+  ];
   
-  const title = beforeDate || afterDate || 'Event';
-  return title.replace(/^(meeting|call|sync|event)\s*/i, '').trim() || 'Event';
+  let cleanText = text;
+  
+  // Remove all date/time patterns
+  patterns.forEach(pattern => {
+    cleanText = cleanText.replace(pattern, ' ');
+  });
+  
+  // Clean up extra spaces and common words
+  cleanText = cleanText
+    .replace(/\s+/g, ' ') // multiple spaces to single
+    .replace(/\b(at|on|the|a|an)\b/gi, ' ') // common words
+    .trim();
+  
+  // If nothing left, use fallback
+  if (!cleanText || cleanText.length < 2) {
+    return 'Event';
+  }
+  
+  return cleanText;
 }
 
 function createGoogleCalendarUrl(event, timezone) {
@@ -112,15 +208,24 @@ function createGoogleCalendarUrl(event, timezone) {
   
   let dates;
   if (event.allDay) {
-    // All-day event format: YYYYMMDD
+    // All-day event format: YYYYMMDD (no timezone conversion needed)
     const startDate = event.start.toISOString().split('T')[0].replace(/-/g, '');
     const endDate = new Date(event.start.getTime() + 24 * 60 * 60 * 1000)
       .toISOString().split('T')[0].replace(/-/g, '');
     dates = `${startDate}/${endDate}`;
   } else {
-    // Timed event format: YYYYMMDDTHHMMSSZ
-    const startTime = event.start.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-    const endTime = event.end.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    // For timed events, format as local time without timezone conversion
+    const formatLocalTime = (date) => {
+      const year = date.getFullYear();
+      const month = (date.getMonth() + 1).toString().padStart(2, '0');
+      const day = date.getDate().toString().padStart(2, '0');
+      const hour = date.getHours().toString().padStart(2, '0');
+      const minute = date.getMinutes().toString().padStart(2, '0');
+      return `${year}${month}${day}T${hour}${minute}00`;
+    };
+    
+    const startTime = formatLocalTime(event.start);
+    const endTime = formatLocalTime(event.end);
     dates = `${startTime}/${endTime}`;
   }
   
@@ -147,7 +252,7 @@ async function createIcsFile(event) {
     ];
     // For all-day events, don't set end time
   } else {
-    // Timed event
+    // Timed event - use local time components directly
     icsEvent.start = [
       event.start.getFullYear(),
       event.start.getMonth() + 1,
@@ -162,6 +267,9 @@ async function createIcsFile(event) {
       event.end.getHours(),
       event.end.getMinutes()
     ];
+    // Add timezone info to ICS
+    icsEvent.startInputType = 'local';
+    icsEvent.endInputType = 'local';
   }
   
   const { error, value } = createEvent(icsEvent);
@@ -260,9 +368,13 @@ async function handleMessage(message) {
   
   const title = extractTitle(text, dateMatch);
   const start = dateMatch.start.date();
+  console.log('Final parsed date:', start.toISOString());
   
   // Check if time was specified or just date
   const hasTime = dateMatch.start.knownValues.hour !== undefined;
+  console.log('Has time:', hasTime, 'Known values:', dateMatch.start.knownValues);
+  
+
   
   let event;
   if (hasTime) {
@@ -282,15 +394,19 @@ async function handleMessage(message) {
       whenText = start.toLocaleDateString('en-US', {
         weekday: 'long',
         month: 'short',
-        day: 'numeric'
+        day: 'numeric',
+        timeZone: prefs.timezone
       }) + ' (All day)';
     } else {
-      whenText = start.toLocaleString('en-US', {
+      // Create a new date in the user's timezone to avoid UTC conversion issues
+      const localDate = new Date(start.getTime());
+      whenText = localDate.toLocaleString('en-US', {
         weekday: 'short',
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
-        minute: '2-digit'
+        minute: '2-digit',
+        hour12: true
       }) + ` (${prefs.duration_min}min)`;
     }
     
