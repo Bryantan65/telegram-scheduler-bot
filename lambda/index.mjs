@@ -335,7 +335,7 @@ function extractTitle(text, dateMatch) {
   cleanText = cleanText
     .replace(/[,;]/g, ' ') // remove commas and semicolons
     .replace(/\s+/g, ' ') // multiple spaces to single
-    .replace(/\b(the|a|an|with)\b/gi, ' ') // common words
+    .replace(/\b(the|a|an)\b/gi, ' ') // common words
     .trim();
   
   // If nothing left, use fallback
