@@ -390,7 +390,10 @@ async function handleCommand(message) {
         `/tz &lt;timezone&gt; - Set group timezone\n` +
         `/duration &lt;minutes&gt; - Set group default duration\n` +
         `/admin - Reply to a message to promote user as bot admin\n` +
-        `/blacklist &lt;word&gt; - Add/remove words from blacklist\n\n` +
+        `/blacklist &lt;word&gt; - Add/remove words from blacklist\n` +
+        `/whitelist &lt;word&gt; - Add/remove words from whitelist\n` +
+        `/showblacklist - Show blacklisted words\n` +
+        `/showwhitelist - Show whitelisted words\n\n` +
         `<b>Anyone can:</b> Create events by mentioning dates/times\n` +
         `Try: <i>"Meeting tomorrow 2pm"</i> 🚀` :
         `🤖 <b>Welcome to Telegram Scheduler Bot!</b>\n\n` +
@@ -402,6 +405,10 @@ async function handleCommand(message) {
         `<b>Commands:</b>\n` +
         `/tz &lt;timezone&gt; - Set your timezone (default: Asia/Singapore)\n` +
         `/duration &lt;minutes&gt; - Set default event duration (default: 60min)\n` +
+        `/blacklist &lt;word&gt; - Add/remove words from blacklist\n` +
+        `/whitelist &lt;word&gt; - Add/remove words from whitelist\n` +
+        `/showblacklist - Show blacklisted words\n` +
+        `/showwhitelist - Show whitelisted words\n` +
         `/help - Show this help\n\n` +
         `Try sending me: <i>"Meeting tomorrow 2pm"</i> 🚀`;
       
