@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { DynamoDBClient, GetItemCommand, PutItemCommand } from '@aws-sdk/client-dynamodb';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
@@ -75,7 +75,25 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
 }
 
 function parseDateTime(text, timezone) {
-  const results = chrono.parse(text, new Date(), { timezone });
+  let results = chrono.parse(text, new Date(), { timezone });
+  
+  // If no results, try fallback for standalone weekdays
+  if (results.length === 0) {
+    const weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    const lowerText = text.toLowerCase();
+    
+    for (const day of weekdays) {
+      if (lowerText.includes(day)) {
+        // Parse as "this [weekday]"
+        const fallbackResults = chrono.parse(`this ${day}`, new Date(), { timezone });
+        if (fallbackResults.length > 0) {
+          results = fallbackResults;
+          break;
+        }
+      }
+    }
+  }
+  
   return results.length > 0 ? results[0] : null;
 }
 
@@ -89,24 +107,62 @@ function extractTitle(text, dateMatch) {
   return title.replace(/^(meeting|call|sync|event)\s*/i, '').trim() || 'Event';
 }
 
+function createGoogleCalendarUrl(event, timezone) {
+  const baseUrl = 'https://calendar.google.com/calendar/render?action=TEMPLATE';
+  
+  let dates;
+  if (event.allDay) {
+    // All-day event format: YYYYMMDD
+    const startDate = event.start.toISOString().split('T')[0].replace(/-/g, '');
+    const endDate = new Date(event.start.getTime() + 24 * 60 * 60 * 1000)
+      .toISOString().split('T')[0].replace(/-/g, '');
+    dates = `${startDate}/${endDate}`;
+  } else {
+    // Timed event format: YYYYMMDDTHHMMSSZ
+    const startTime = event.start.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    const endTime = event.end.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    dates = `${startTime}/${endTime}`;
+  }
+  
+  const params = new URLSearchParams({
+    text: event.title,
+    dates: dates,
+    ctz: timezone
+  });
+  
+  return `${baseUrl}&${params.toString()}`;
+}
+
 async function createIcsFile(event) {
   const icsEvent = {
-    title: event.title,
-    start: [
+    title: event.title
+  };
+  
+  if (event.allDay) {
+    // All-day event - only date, no time
+    icsEvent.start = [
+      event.start.getFullYear(),
+      event.start.getMonth() + 1,
+      event.start.getDate()
+    ];
+    // For all-day events, don't set end time
+  } else {
+    // Timed event
+    icsEvent.start = [
       event.start.getFullYear(),
       event.start.getMonth() + 1,
       event.start.getDate(),
       event.start.getHours(),
       event.start.getMinutes()
-    ],
-    end: [
+    ];
+    icsEvent.end = [
       event.end.getFullYear(),
       event.end.getMonth() + 1,
       event.end.getDate(),
       event.end.getHours(),
       event.end.getMinutes()
-    ]
-  };
+    ];
+  }
   
   const { error, value } = createEvent(icsEvent);
   if (error) throw new Error('Failed to create ICS file');
@@ -136,18 +192,20 @@ async function handleCommand(message) {
   const command = parts[0];
   
   switch (command) {
+    case '/start':
     case '/help':
       await sendTelegramMessage(chat.id, 
-        `🤖 <b>Telegram Scheduler Bot</b>\n\n` +
-        `Send me messages with dates and times, I'll create calendar events!\n\n` +
+        `🤖 <b>Welcome to Telegram Scheduler Bot!</b>\n\n` +
+        `I help you create calendar events from natural language! Just send me messages with dates and times.\n\n` +
         `<b>Examples:</b>\n` +
         `• "Team meeting tmr 3pm"\n` +
         `• "Doctor appointment next Friday 10:30am"\n` +
         `• "Project sync 25 Oct 2pm"\n\n` +
         `<b>Commands:</b>\n` +
-        `/tz &lt;timezone&gt; - Set your timezone\n` +
-        `/duration &lt;minutes&gt; - Set default event duration\n` +
-        `/help - Show this help`
+        `/tz &lt;timezone&gt; - Set your timezone (default: Asia/Singapore)\n` +
+        `/duration &lt;minutes&gt; - Set default event duration (default: 60min)\n` +
+        `/help - Show this help\n\n` +
+        `Try sending me: <i>"Meeting tomorrow 2pm"</i> 🚀`
       );
       break;
       
@@ -202,31 +260,55 @@ async function handleMessage(message) {
   
   const title = extractTitle(text, dateMatch);
   const start = dateMatch.start.date();
-  const end = new Date(start.getTime() + prefs.duration_min * 60000);
   
-  const event = { title, start, end };
+  // Check if time was specified or just date
+  const hasTime = dateMatch.start.knownValues.hour !== undefined;
+  
+  let event;
+  if (hasTime) {
+    // Timed event
+    const end = new Date(start.getTime() + prefs.duration_min * 60000);
+    event = { title, start, end, allDay: false };
+  } else {
+    // All-day event
+    event = { title, start, allDay: true };
+  }
   
   try {
     const icsUrl = await createIcsFile(event);
     
-    const timeStr = start.toLocaleString('en-SG', {
-      timeZone: prefs.timezone,
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    let whenText;
+    if (event.allDay) {
+      whenText = start.toLocaleDateString('en-US', {
+        weekday: 'long',
+        month: 'short',
+        day: 'numeric'
+      }) + ' (All day)';
+    } else {
+      whenText = start.toLocaleString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }) + ` (${prefs.duration_min}min)`;
+    }
+    
+    // Create Google Calendar URL
+    const googleUrl = createGoogleCalendarUrl(event, prefs.timezone);
     
     await sendTelegramMessage(chat.id,
       `📅 <b>Event detected:</b>\n` +
       `<b>Title:</b> ${title}\n` +
-      `<b>When:</b> ${timeStr} (${prefs.duration_min}min)\n` +
+      `<b>When:</b> ${whenText}\n` +
       `<b>Timezone:</b> ${prefs.timezone}`,
       {
-        inline_keyboard: [[
-          { text: '📥 Add to Calendar', url: icsUrl }
-        ]]
+        inline_keyboard: [
+          [
+            { text: '📥 Download ICS', url: icsUrl },
+            { text: '📅 Google Calendar', url: googleUrl }
+          ]
+        ]
       }
     );
   } catch (error) {

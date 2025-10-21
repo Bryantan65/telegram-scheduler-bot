@@ -51,8 +51,7 @@ export class TelegramSchedulerBotStack extends cdk.Stack {
       environment: {
         BUCKET: bucket.bucketName,
         USERS_TABLE: usersTable.tableName,
-        SECRET_ID: botSecret.secretName,
-        AWS_REGION: this.region
+        SECRET_ID: botSecret.secretName
       }
     });
 
