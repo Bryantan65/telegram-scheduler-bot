@@ -1,6 +1,7 @@
 # Telegram Scheduler Bot
 
 A serverless Telegram bot that parses natural language date/time phrases and creates calendar events. Built with AWS Lambda, API Gateway, and modern JavaScript.
+How to use? Just search @bryans_scheduler_bot on Telegram!
 
 ## 🚀 Features
 
