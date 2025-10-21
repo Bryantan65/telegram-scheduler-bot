@@ -295,14 +295,40 @@ async function createIcsFile(event) {
 
 async function handleCommand(message) {
   const { chat, from, text } = message;
-  const userId = from.id.toString();
+  const isGroup = chat.type === 'group' || chat.type === 'supergroup';
+  const prefId = isGroup ? chat.id.toString() : from.id.toString();
   const parts = text.split(' ');
   const command = parts[0];
+  
+  // Check if user is admin for group settings
+  const isAdmin = async () => {
+    if (!isGroup) return true; // Always admin in private chat
+    
+    try {
+      const token = await getBotToken();
+      const response = await fetch(`https://api.telegram.org/bot${token}/getChatMember?chat_id=${chat.id}&user_id=${from.id}`);
+      const data = await response.json();
+      return ['creator', 'administrator'].includes(data.result?.status);
+    } catch {
+      return false;
+    }
+  };
   
   switch (command) {
     case '/start':
     case '/help':
-      await sendTelegramMessage(chat.id, 
+      const helpText = isGroup ? 
+        `🤖 <b>Telegram Scheduler Bot - Group Mode</b>\n\n` +
+        `I help create calendar events from natural language in group chats!\n\n` +
+        `<b>Examples:</b>\n` +
+        `• "Team meeting tmr 3pm"\n` +
+        `• "Project sync next Friday 10:30am"\n` +
+        `• "Standup Monday 9am"\n\n` +
+        `<b>Group Commands (Admin Only):</b>\n` +
+        `/tz &lt;timezone&gt; - Set group timezone\n` +
+        `/duration &lt;minutes&gt; - Set group default duration\n\n` +
+        `<b>Anyone can:</b> Create events by mentioning dates/times\n` +
+        `Try: <i>"Meeting tomorrow 2pm"</i> 🚀` :
         `🤖 <b>Welcome to Telegram Scheduler Bot!</b>\n\n` +
         `I help you create calendar events from natural language! Just send me messages with dates and times.\n\n` +
         `<b>Examples:</b>\n` +
@@ -313,36 +339,51 @@ async function handleCommand(message) {
         `/tz &lt;timezone&gt; - Set your timezone (default: Asia/Singapore)\n` +
         `/duration &lt;minutes&gt; - Set default event duration (default: 60min)\n` +
         `/help - Show this help\n\n` +
-        `Try sending me: <i>"Meeting tomorrow 2pm"</i> 🚀`
-      );
+        `Try sending me: <i>"Meeting tomorrow 2pm"</i> 🚀`;
+      
+      await sendTelegramMessage(chat.id, helpText);
       break;
       
     case '/tz':
       if (parts.length < 2) {
-        await sendTelegramMessage(chat.id, 'Usage: /tz Asia/Singapore');
+        const scope = isGroup ? 'group' : 'your';
+        await sendTelegramMessage(chat.id, `Usage: /tz Asia/Singapore\nSets ${scope} timezone`);
+        return;
+      }
+      
+      if (isGroup && !(await isAdmin())) {
+        await sendTelegramMessage(chat.id, '❌ Only group admins can change timezone settings');
         return;
       }
       
       const timezone = parts.slice(1).join(' ');
-      const prefs = await getUserPrefs(userId);
+      const prefs = await getUserPrefs(prefId);
       prefs.timezone = timezone;
-      await saveUserPrefs(userId, prefs);
+      await saveUserPrefs(prefId, prefs);
       
-      await sendTelegramMessage(chat.id, `✅ Timezone set to ${timezone}`);
+      const scope = isGroup ? 'Group' : 'Your';
+      await sendTelegramMessage(chat.id, `✅ ${scope} timezone set to ${timezone}`);
       break;
       
     case '/duration':
       if (parts.length < 2 || isNaN(parts[1])) {
-        await sendTelegramMessage(chat.id, 'Usage: /duration 60');
+        const scope = isGroup ? 'group' : 'your';
+        await sendTelegramMessage(chat.id, `Usage: /duration 60\nSets ${scope} default event duration`);
+        return;
+      }
+      
+      if (isGroup && !(await isAdmin())) {
+        await sendTelegramMessage(chat.id, '❌ Only group admins can change duration settings');
         return;
       }
       
       const duration = parseInt(parts[1]);
-      const userPrefs = await getUserPrefs(userId);
+      const userPrefs = await getUserPrefs(prefId);
       userPrefs.duration_min = duration;
-      await saveUserPrefs(userId, userPrefs);
+      await saveUserPrefs(prefId, userPrefs);
       
-      await sendTelegramMessage(chat.id, `✅ Default duration set to ${duration} minutes`);
+      const scope = isGroup ? 'Group' : 'Your';
+      await sendTelegramMessage(chat.id, `✅ ${scope} default duration set to ${duration} minutes`);
       break;
       
     default:
@@ -360,8 +401,10 @@ async function handleMessage(message) {
     return;
   }
   
-  const userId = from.id.toString();
-  const prefs = await getUserPrefs(userId);
+  // Support both private chats and groups
+  const isGroup = chat.type === 'group' || chat.type === 'supergroup';
+  const prefId = isGroup ? chat.id.toString() : from.id.toString();
+  const prefs = await getUserPrefs(prefId);
   
   const dateMatch = parseDateTime(text, prefs.timezone);
   if (!dateMatch) return;
@@ -413,11 +456,13 @@ async function handleMessage(message) {
     // Create Google Calendar URL
     const googleUrl = createGoogleCalendarUrl(event, prefs.timezone);
     
+    const createdBy = isGroup ? `\n<b>Created by:</b> ${from.first_name || from.username || 'Unknown'}` : '';
+    
     await sendTelegramMessage(chat.id,
       `📅 <b>Event detected:</b>\n` +
       `<b>Title:</b> ${title}\n` +
       `<b>When:</b> ${whenText}\n` +
-      `<b>Timezone:</b> ${prefs.timezone}`,
+      `<b>Timezone:</b> ${prefs.timezone}${createdBy}`,
       {
         inline_keyboard: [
           [
