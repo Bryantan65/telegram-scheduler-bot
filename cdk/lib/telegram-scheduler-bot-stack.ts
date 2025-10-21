@@ -2,26 +2,13 @@ import * as cdk from 'aws-cdk-lib';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
-import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
-import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
 export class TelegramSchedulerBotStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
-
-    // S3 bucket for ICS files
-    const bucket = new s3.Bucket(this, 'CalendarFilesBucket', {
-      bucketName: `tg-calendar-ics-${this.account}-${this.region}`,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      autoDeleteObjects: true,
-      lifecycleRules: [{
-        id: 'DeleteOldFiles',
-        expiration: cdk.Duration.days(7)
-      }]
-    });
 
     // DynamoDB table for users
     const usersTable = new dynamodb.Table(this, 'UsersTable', {
@@ -49,14 +36,12 @@ export class TelegramSchedulerBotStack extends cdk.Stack {
       code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda')),
       timeout: cdk.Duration.seconds(30),
       environment: {
-        BUCKET: bucket.bucketName,
         USERS_TABLE: usersTable.tableName,
         SECRET_ID: botSecret.secretName
       }
     });
 
     // Grant permissions
-    bucket.grantReadWrite(lambdaFunction);
     usersTable.grantReadWriteData(lambdaFunction);
     botSecret.grantRead(lambdaFunction);
 
@@ -77,11 +62,6 @@ export class TelegramSchedulerBotStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'WebhookUrl', {
       value: `${api.url}webhook`,
       description: 'Telegram webhook URL'
-    });
-
-    new cdk.CfnOutput(this, 'BucketName', {
-      value: bucket.bucketName,
-      description: 'S3 bucket for ICS files'
     });
 
     new cdk.CfnOutput(this, 'SecretName', {

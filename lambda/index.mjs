@@ -1,11 +1,8 @@
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { DynamoDBClient, GetItemCommand, PutItemCommand } from '@aws-sdk/client-dynamodb';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import * as chrono from 'chrono-node';
 import { createEvent } from 'ics';
 
-const s3 = new S3Client({ region: process.env.AWS_REGION });
 const dynamodb = new DynamoDBClient({ region: process.env.AWS_REGION });
 const secrets = new SecretsManagerClient({ region: process.env.AWS_REGION });
 
@@ -398,71 +395,64 @@ function createGoogleCalendarUrl(event, timezone) {
   return `${baseUrl}&${params.toString()}`;
 }
 
-function createOutlookUrl(event) {
-  const baseUrl = 'https://outlook.live.com/calendar/0/deeplink/compose';
-  
-  const params = new URLSearchParams({
-    subject: event.title,
-    startdt: event.start.toISOString(),
-    enddt: event.allDay ? new Date(event.start.getTime() + 24 * 60 * 60 * 1000).toISOString() : event.end.toISOString(),
-    allday: event.allDay ? 'true' : 'false'
+function createIcsContent(event, timezone) {
+  // Use the same time format as Google Calendar - local time with timezone
+  const { error, value } = createEvent({
+    title: event.title,
+    start: event.allDay ? 
+      [event.start.getFullYear(), event.start.getMonth() + 1, event.start.getDate()] :
+      [event.start.getFullYear(), event.start.getMonth() + 1, event.start.getDate(), event.start.getHours(), event.start.getMinutes()],
+    end: event.allDay ? 
+      [event.start.getFullYear(), event.start.getMonth() + 1, event.start.getDate() + 1] :
+      [event.end.getFullYear(), event.end.getMonth() + 1, event.end.getDate(), event.end.getHours(), event.end.getMinutes()],
+    startInputType: 'local',
+    endInputType: 'local',
+    startOutputType: 'local',
+    endOutputType: 'local'
   });
   
-  return `${baseUrl}?${params.toString()}`;
-}
-
-function createIcsContent(event) {
-  const icsEvent = {
-    title: event.title
-  };
-  
-  if (event.allDay) {
-    icsEvent.start = [
-      event.start.getFullYear(),
-      event.start.getMonth() + 1,
-      event.start.getDate()
-    ];
-  } else {
-    icsEvent.start = [
-      event.start.getFullYear(),
-      event.start.getMonth() + 1,
-      event.start.getDate(),
-      event.start.getHours(),
-      event.start.getMinutes()
-    ];
-    icsEvent.end = [
-      event.end.getFullYear(),
-      event.end.getMonth() + 1,
-      event.end.getDate(),
-      event.end.getHours(),
-      event.end.getMinutes()
-    ];
-    icsEvent.startInputType = 'local';
-    icsEvent.endInputType = 'local';
-  }
-  
-  const { error, value } = createEvent(icsEvent);
-  if (error) throw new Error('Failed to create ICS file');
-  
+  if (error) throw new Error('Failed to create ICS content');
   return value;
 }
 
-async function sendIcsAsDocument(chatId, event) {
-  const icsContent = createIcsContent(event);
+async function sendIcsDocument(chatId, icsContent, eventTitle) {
   const token = await getBotToken();
+  const url = `https://api.telegram.org/bot${token}/sendDocument`;
   
-  const formData = new FormData();
-  formData.append('chat_id', chatId);
-  formData.append('document', new Blob([icsContent], { type: 'text/calendar' }), 'event.ics');
-  formData.append('caption', '📅 Calendar event file - tap to add to your calendar');
+  const fileName = `${eventTitle.replace(/[^a-zA-Z0-9]/g, '_')}.ics`;
+  const boundary = '----formdata-' + Math.random().toString(36);
   
-  const response = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+  const body = [
+    `--${boundary}`,
+    'Content-Disposition: form-data; name="chat_id"',
+    '',
+    chatId,
+    `--${boundary}`,
+    `Content-Disposition: form-data; name="document"; filename="${fileName}"`,
+    'Content-Type: text/calendar',
+    '',
+    icsContent,
+    `--${boundary}`,
+    'Content-Disposition: form-data; name="caption"',
+    '',
+    '📅 Tap to add to your calendar',
+    `--${boundary}--`
+  ].join('\r\n');
+  
+  const response = await fetch(url, {
     method: 'POST',
-    body: formData
+    headers: {
+      'Content-Type': `multipart/form-data; boundary=${boundary}`
+    },
+    body: body
   });
   
-  return response.json();
+  return await response.json();
 }
+
+
+
+
 
 async function handleCommand(message) {
   const { chat, from, text } = message;
@@ -780,13 +770,13 @@ async function handleMessage(message) {
       console.log('Formatted time:', whenText);
     }
     
-    // Create calendar URLs
+    // Create calendar URLs and ICS content
     const googleUrl = createGoogleCalendarUrl(event, safeTimezone);
-    const outlookUrl = createOutlookUrl(event);
+    const icsContent = createIcsContent(event, safeTimezone);
     
     const createdBy = isGroup ? `\n<b>Created by:</b> ${from.first_name || from.username || 'Unknown'}` : '';
     
-    // Send main message with web calendar options
+    // Send main message with Google Calendar option
     await sendTelegramMessage(chat.id,
       `📅 <b>Event detected:</b>\n` +
       `<b>Title:</b> ${title}\n` +
@@ -795,15 +785,14 @@ async function handleMessage(message) {
       {
         inline_keyboard: [
           [
-            { text: '🌐 Google Calendar', url: googleUrl },
-            { text: '💼 Outlook', url: outlookUrl }
+            { text: '🌐 Google Calendar', url: googleUrl }
           ]
         ]
       }
     );
     
     // Send ICS file as document
-    await sendIcsAsDocument(chat.id, event);
+    await sendIcsDocument(chat.id, icsContent, title);
   } catch (error) {
     console.error('Error creating event:', error);
     await sendTelegramMessage(chat.id, '❌ Sorry, failed to create calendar event.');
@@ -815,6 +804,7 @@ export const handler = async (event) => {
     console.log('Received event:', JSON.stringify(event, null, 2));
     const body = JSON.parse(event.body);
     console.log('Parsed body:', JSON.stringify(body, null, 2));
+    console.log('Lambda v2.0 - with ICS document support');
     
     if (body.message) {
       console.log('Processing message:', body.message);
