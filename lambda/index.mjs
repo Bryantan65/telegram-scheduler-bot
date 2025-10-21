@@ -134,8 +134,13 @@ function parseDateTime(text, timezone) {
     cleanedText = cleanedText.replace(timeRangeMatch[0], startTime);
   }
   
+  console.log('Original text:', text);
+  console.log('Cleaned text:', cleanedText);
+  
   // First try chrono-node's natural parsing
   let results = chrono.parse(cleanedText, now, { timezone: safeTimezone });
+  
+  console.log('Chrono results:', results.length > 0 ? results[0].start.date().toISOString() : 'No results');
   
   // If chrono found results, use them unless they seem wrong
   if (results.length > 0) {
@@ -153,18 +158,23 @@ function parseDateTime(text, timezone) {
     }
   }
   
-  // Fallback for standalone dot notation times like "3.30pm"
+  // Fallback for dot notation times like "3.30pm"
   if (results.length === 0) {
-    const dotTimeMatch = text.match(/\b(\d{1,2})\.(\d{2})(am|pm)\b/i);
+    const dotTimeMatch = text.match(/(\d{1,2})\.(\d{2})(am|pm)/i);
     if (dotTimeMatch) {
+      console.log('Found dot time match:', dotTimeMatch);
       const hour = parseInt(dotTimeMatch[1]);
       const minutes = parseInt(dotTimeMatch[2]);
       const ampm = dotTimeMatch[3].toLowerCase();
+      
+      console.log('Parsed time:', { hour, minutes, ampm });
       
       // Convert to 24-hour format
       let hour24 = hour;
       if (ampm === 'pm' && hour !== 12) hour24 += 12;
       if (ampm === 'am' && hour === 12) hour24 = 0;
+      
+      console.log('24-hour format:', hour24);
       
       // Create target date for tomorrow if "tmr" is in text
       const targetDate = new Date(now);
@@ -172,6 +182,8 @@ function parseDateTime(text, timezone) {
         targetDate.setDate(targetDate.getDate() + 1);
       }
       targetDate.setHours(hour24, minutes, 0, 0);
+      
+      console.log('Final target date:', targetDate.toISOString());
       
       results = [{
         index: dotTimeMatch.index,
