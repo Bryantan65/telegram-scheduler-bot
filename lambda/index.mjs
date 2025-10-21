@@ -370,13 +370,11 @@ function createGoogleCalendarUrl(event, timezone) {
   
   let dates;
   if (event.allDay) {
-    // All-day event format: YYYYMMDD (no timezone conversion needed)
     const startDate = event.start.toISOString().split('T')[0].replace(/-/g, '');
     const endDate = new Date(event.start.getTime() + 24 * 60 * 60 * 1000)
       .toISOString().split('T')[0].replace(/-/g, '');
     dates = `${startDate}/${endDate}`;
   } else {
-    // For timed events, format as local time without timezone conversion
     const formatLocalTime = (date) => {
       const year = date.getFullYear();
       const month = (date.getMonth() + 1).toString().padStart(2, '0');
@@ -400,21 +398,31 @@ function createGoogleCalendarUrl(event, timezone) {
   return `${baseUrl}&${params.toString()}`;
 }
 
-async function createIcsFile(event) {
+function createOutlookUrl(event) {
+  const baseUrl = 'https://outlook.live.com/calendar/0/deeplink/compose';
+  
+  const params = new URLSearchParams({
+    subject: event.title,
+    startdt: event.start.toISOString(),
+    enddt: event.allDay ? new Date(event.start.getTime() + 24 * 60 * 60 * 1000).toISOString() : event.end.toISOString(),
+    allday: event.allDay ? 'true' : 'false'
+  });
+  
+  return `${baseUrl}?${params.toString()}`;
+}
+
+function createIcsContent(event) {
   const icsEvent = {
     title: event.title
   };
   
   if (event.allDay) {
-    // All-day event - only date, no time
     icsEvent.start = [
       event.start.getFullYear(),
       event.start.getMonth() + 1,
       event.start.getDate()
     ];
-    // For all-day events, don't set end time
   } else {
-    // Timed event - use local time components directly
     icsEvent.start = [
       event.start.getFullYear(),
       event.start.getMonth() + 1,
@@ -429,7 +437,6 @@ async function createIcsFile(event) {
       event.end.getHours(),
       event.end.getMinutes()
     ];
-    // Add timezone info to ICS
     icsEvent.startInputType = 'local';
     icsEvent.endInputType = 'local';
   }
@@ -437,22 +444,24 @@ async function createIcsFile(event) {
   const { error, value } = createEvent(icsEvent);
   if (error) throw new Error('Failed to create ICS file');
   
-  const fileName = `event-${Date.now()}.ics`;
-  const command = new PutObjectCommand({
-    Bucket: process.env.BUCKET,
-    Key: fileName,
-    Body: value,
-    ContentType: 'text/calendar'
+  return value;
+}
+
+async function sendIcsAsDocument(chatId, event) {
+  const icsContent = createIcsContent(event);
+  const token = await getBotToken();
+  
+  const formData = new FormData();
+  formData.append('chat_id', chatId);
+  formData.append('document', new Blob([icsContent], { type: 'text/calendar' }), 'event.ics');
+  formData.append('caption', '📅 Calendar event file - tap to add to your calendar');
+  
+  const response = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+    method: 'POST',
+    body: formData
   });
   
-  await s3.send(command);
-  
-  const signedUrl = await getSignedUrl(s3, new GetObjectCommand({
-    Bucket: process.env.BUCKET,
-    Key: fileName
-  }), { expiresIn: 3600 });
-  
-  return signedUrl;
+  return response.json();
 }
 
 async function handleCommand(message) {
@@ -745,8 +754,6 @@ async function handleMessage(message) {
   }
   
   try {
-    const icsUrl = await createIcsFile(event);
-    
     const safeTimezone = isValidTimezone(prefs.timezone) ? prefs.timezone : 'Asia/Singapore';
     
     console.log('Event start time:', start.toISOString());
@@ -761,7 +768,6 @@ async function handleMessage(message) {
         day: 'numeric'
       }) + ' (All day)';
     } else {
-      // Format time as local time (don't convert through timezone)
       whenText = start.toLocaleString('en-US', {
         weekday: 'short',
         month: 'short',
@@ -774,11 +780,13 @@ async function handleMessage(message) {
       console.log('Formatted time:', whenText);
     }
     
-    // Create Google Calendar URL
+    // Create calendar URLs
     const googleUrl = createGoogleCalendarUrl(event, safeTimezone);
+    const outlookUrl = createOutlookUrl(event);
     
     const createdBy = isGroup ? `\n<b>Created by:</b> ${from.first_name || from.username || 'Unknown'}` : '';
     
+    // Send main message with web calendar options
     await sendTelegramMessage(chat.id,
       `📅 <b>Event detected:</b>\n` +
       `<b>Title:</b> ${title}\n` +
@@ -787,12 +795,15 @@ async function handleMessage(message) {
       {
         inline_keyboard: [
           [
-            { text: '📥 Download ICS', url: icsUrl },
-            { text: '📅 Google Calendar', url: googleUrl }
+            { text: '🌐 Google Calendar', url: googleUrl },
+            { text: '💼 Outlook', url: outlookUrl }
           ]
         ]
       }
     );
+    
+    // Send ICS file as document
+    await sendIcsAsDocument(chat.id, event);
   } catch (error) {
     console.error('Error creating event:', error);
     await sendTelegramMessage(chat.id, '❌ Sorry, failed to create calendar event.');
