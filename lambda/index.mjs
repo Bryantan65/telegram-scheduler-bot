@@ -361,8 +361,8 @@ async function handleCommand(message) {
       prefs.timezone = timezone;
       await saveUserPrefs(prefId, prefs);
       
-      const scope = isGroup ? 'Group' : 'Your';
-      await sendTelegramMessage(chat.id, `✅ ${scope} timezone set to ${timezone}`);
+      const scopeMsg = isGroup ? 'Group' : 'Your';
+      await sendTelegramMessage(chat.id, `✅ ${scopeMsg} timezone set to ${timezone}`);
       break;
       
     case '/duration':
@@ -382,8 +382,8 @@ async function handleCommand(message) {
       userPrefs.duration_min = duration;
       await saveUserPrefs(prefId, userPrefs);
       
-      const scope = isGroup ? 'Group' : 'Your';
-      await sendTelegramMessage(chat.id, `✅ ${scope} default duration set to ${duration} minutes`);
+      const durationScopeMsg = isGroup ? 'Group' : 'Your';
+      await sendTelegramMessage(chat.id, `✅ ${durationScopeMsg} default duration set to ${duration} minutes`);
       break;
       
     default:
@@ -416,8 +416,6 @@ async function handleMessage(message) {
   // Check if time was specified or just date
   const hasTime = dateMatch.start.knownValues.hour !== undefined;
   console.log('Has time:', hasTime, 'Known values:', dateMatch.start.knownValues);
-  
-
   
   let event;
   if (hasTime) {
@@ -480,10 +478,15 @@ async function handleMessage(message) {
 
 export const handler = async (event) => {
   try {
+    console.log('Received event:', JSON.stringify(event, null, 2));
     const body = JSON.parse(event.body);
+    console.log('Parsed body:', JSON.stringify(body, null, 2));
     
     if (body.message) {
+      console.log('Processing message:', body.message);
       await handleMessage(body.message);
+    } else {
+      console.log('No message in body');
     }
     
     return {
