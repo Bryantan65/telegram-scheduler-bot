@@ -123,13 +123,15 @@ function parseDateTime(text, timezone) {
   // Use safe timezone - fallback to Singapore if invalid
   const safeTimezone = isValidTimezone(timezone) ? timezone : 'Asia/Singapore';
   
-  // Try to extract just the first time from ranges like "3.30pm-4.30pm"
-  const timeRangeMatch = text.match(/(\d{1,2})[.:]?(\d{2})?(am|pm)\s*[-–]\s*(\d{1,2})[.:]?(\d{2})?(am|pm)/i);
-  let cleanedText = text;
+  // Convert dot notation to colon notation for better parsing
+  let cleanedText = text.replace(/(\d{1,2})\.(\d{2})(am|pm)/gi, '$1:$2$3');
+  
+  // Try to extract just the first time from ranges like "3:30pm-4:30pm"
+  const timeRangeMatch = cleanedText.match(/(\d{1,2}):?(\d{2})?(am|pm)\s*[-–]\s*(\d{1,2}):?(\d{2})?(am|pm)/i);
   if (timeRangeMatch) {
     // Replace the range with just the start time
     const startTime = `${timeRangeMatch[1]}${timeRangeMatch[2] ? ':' + timeRangeMatch[2] : ''}${timeRangeMatch[3]}`;
-    cleanedText = text.replace(timeRangeMatch[0], startTime);
+    cleanedText = cleanedText.replace(timeRangeMatch[0], startTime);
   }
   
   // First try chrono-node's natural parsing
@@ -148,6 +150,43 @@ function parseDateTime(text, timezone) {
     } else {
       // Chrono found a good result, use it
       return results[0];
+    }
+  }
+  
+  // Fallback for standalone dot notation times like "3.30pm"
+  if (results.length === 0) {
+    const dotTimeMatch = text.match(/\b(\d{1,2})\.(\d{2})(am|pm)\b/i);
+    if (dotTimeMatch) {
+      const hour = parseInt(dotTimeMatch[1]);
+      const minutes = parseInt(dotTimeMatch[2]);
+      const ampm = dotTimeMatch[3].toLowerCase();
+      
+      // Convert to 24-hour format
+      let hour24 = hour;
+      if (ampm === 'pm' && hour !== 12) hour24 += 12;
+      if (ampm === 'am' && hour === 12) hour24 = 0;
+      
+      // Create target date for tomorrow if "tmr" is in text
+      const targetDate = new Date(now);
+      if (text.toLowerCase().includes('tmr') || text.toLowerCase().includes('tomorrow')) {
+        targetDate.setDate(targetDate.getDate() + 1);
+      }
+      targetDate.setHours(hour24, minutes, 0, 0);
+      
+      results = [{
+        index: dotTimeMatch.index,
+        text: dotTimeMatch[0],
+        start: {
+          date: () => targetDate,
+          knownValues: { 
+            year: targetDate.getFullYear(), 
+            month: targetDate.getMonth() + 1, 
+            day: targetDate.getDate(),
+            hour: hour24, 
+            minute: minutes 
+          }
+        }
+      }];
     }
   }
   
