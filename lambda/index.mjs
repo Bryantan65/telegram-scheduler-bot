@@ -142,8 +142,8 @@ function parseDateTime(text, timezone) {
   let results = [];
   
   // Look for specific date patterns with optional time
-  // Pattern 1: "28th" or "28th 5pm" or "28th 1130am"
-  const dayOnlyMatch = text.match(/(\d{1,2})(st|nd|rd|th)(?:\s+(\d{1,2})(\d{2})?(am|pm)?)?/i);
+  // Pattern 1: "28th" or "28th 5pm" or "28th 1130am" or "28th 1130 am"
+  const dayOnlyMatch = text.match(/(\d{1,2})(st|nd|rd|th)(?:\s+(\d{1,2})(\d{2})?\s?(am|pm)?)?/i);
   if (dayOnlyMatch) {
     const day = parseInt(dayOnlyMatch[1]);
     let hour = null;
@@ -204,31 +204,19 @@ function parseDateTime(text, timezone) {
     }
   }
   
-  // Pattern 2: "28 Oct" or "Oct 28" or "28 October" with time like "23 oct 1130am"
+  // Pattern 2: "28 Oct" or "Oct 28" or "28 October" with time like "23 oct 11:30am" or "23 oct 1130 am"
   if (results.length === 0) {
-    const monthDayMatch = text.match(/\b(?:(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)|(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}))(?:\s+(\d{1,4})(am|pm)?)?/i);
+    const monthDayMatch = text.match(/\b(?:(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)|(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}))(?:\s+(\d{1,2})(?:[:.]?(\d{2}))?\s?(am|pm))?/i);
     if (monthDayMatch) {
       const day = parseInt(monthDayMatch[1] || monthDayMatch[4]);
       const monthStr = (monthDayMatch[2] || monthDayMatch[3]).toLowerCase();
       let hour = null;
       let minutes = 0;
-      const ampm = monthDayMatch[6] ? monthDayMatch[6].toLowerCase() : null;
+      const ampm = monthDayMatch[7] ? monthDayMatch[7].toLowerCase() : null;
       
       if (monthDayMatch[5]) {
-        const timeStr = monthDayMatch[5];
-        if (timeStr.length === 3 || timeStr.length === 4) {
-          // Handle 4-digit time like "1130" or 3-digit like "930"
-          if (timeStr.length === 4) {
-            hour = parseInt(timeStr.substring(0, 2));
-            minutes = parseInt(timeStr.substring(2));
-          } else {
-            hour = parseInt(timeStr.substring(0, 1));
-            minutes = parseInt(timeStr.substring(1));
-          }
-        } else {
-          hour = parseInt(timeStr);
-          minutes = 0;
-        }
+        hour = parseInt(monthDayMatch[5]);
+        minutes = monthDayMatch[6] ? parseInt(monthDayMatch[6]) : 0;
       }
       
       const monthMap = {
