@@ -181,6 +181,7 @@ function parseDateTime(text, timezone) {
       if (text.toLowerCase().includes('tmr') || text.toLowerCase().includes('tomorrow')) {
         targetDate.setDate(targetDate.getDate() + 1);
       }
+      // Set time in local timezone, not UTC
       targetDate.setHours(hour24, minutes, 0, 0);
       
       console.log('Final target date:', targetDate.toISOString());
@@ -226,7 +227,7 @@ function parseDateTime(text, timezone) {
       const currentMonth = now.getMonth(); // 0-based month
       const currentYear = now.getFullYear();
       
-      // Create date object directly instead of parsing string
+      // Create date object in local time
       const targetDate = new Date(currentYear, currentMonth, day, hour24, minutes);
       console.log('Created target date:', targetDate.toISOString());
       
@@ -696,7 +697,21 @@ async function handleMessage(message) {
   if (!dateMatch) return;
   
   const title = extractTitle(text, dateMatch);
-  const start = dateMatch.start.date();
+  let start = dateMatch.start.date();
+  
+  // Fix: Use the parsed values directly instead of relying on timezone conversion
+  if (dateMatch.start.knownValues.hour !== undefined) {
+    const targetHour = dateMatch.start.knownValues.hour;
+    const targetMinute = dateMatch.start.knownValues.minute || 0;
+    const targetDay = dateMatch.start.knownValues.day;
+    const targetMonth = dateMatch.start.knownValues.month - 1;
+    const targetYear = dateMatch.start.knownValues.year;
+    
+    // Create date in local time - this represents the user's intended time
+    start = new Date(targetYear, targetMonth, targetDay, targetHour, targetMinute);
+    console.log('Created local time date:', start.toISOString());
+  }
+  
   console.log('Final parsed date:', start.toISOString());
   
   // Check if time was specified or just date
@@ -718,25 +733,29 @@ async function handleMessage(message) {
     
     const safeTimezone = isValidTimezone(prefs.timezone) ? prefs.timezone : 'Asia/Singapore';
     
+    console.log('Event start time:', start.toISOString());
+    console.log('User timezone:', prefs.timezone);
+    console.log('Safe timezone:', safeTimezone);
+    
     let whenText;
     if (event.allDay) {
       whenText = start.toLocaleDateString('en-US', {
         weekday: 'long',
         month: 'short',
-        day: 'numeric',
-        timeZone: safeTimezone
+        day: 'numeric'
       }) + ' (All day)';
     } else {
-      // Format time in user's timezone
+      // Format time as local time (don't convert through timezone)
       whenText = start.toLocaleString('en-US', {
         weekday: 'short',
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
-        hour12: true,
-        timeZone: safeTimezone
+        hour12: true
       }) + ` (${prefs.duration_min}min)`;
+      
+      console.log('Formatted time:', whenText);
     }
     
     // Create Google Calendar URL
