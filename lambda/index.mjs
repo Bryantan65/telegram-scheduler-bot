@@ -31,10 +31,12 @@ async function getUserPrefs(userId) {
     const response = await dynamodb.send(command);
     return response.Item ? {
       timezone: response.Item.timezone?.S || 'Asia/Singapore',
-      duration_min: parseInt(response.Item.duration_min?.N || '60')
-    } : { timezone: 'Asia/Singapore', duration_min: 60 };
+      duration_min: parseInt(response.Item.duration_min?.N || '60'),
+      bot_admins: response.Item.bot_admins?.SS || [],
+      blacklist: response.Item.blacklist?.SS || ['now']
+    } : { timezone: 'Asia/Singapore', duration_min: 60, bot_admins: [], blacklist: ['now'] };
   } catch (error) {
-    return { timezone: 'Asia/Singapore', duration_min: 60 };
+    return { timezone: 'Asia/Singapore', duration_min: 60, bot_admins: [], blacklist: ['now'] };
   }
 }
 
@@ -44,11 +46,27 @@ async function saveUserPrefs(userId, prefs) {
     Item: {
       user_id: { S: userId },
       timezone: { S: prefs.timezone },
-      duration_min: { N: prefs.duration_min.toString() }
+      duration_min: { N: prefs.duration_min.toString() },
+      bot_admins: { SS: prefs.bot_admins || [] },
+      blacklist: { SS: prefs.blacklist || ['now'] }
     }
   });
   
   await dynamodb.send(command);
+}
+
+async function getBotAdmins(groupId) {
+  const prefs = await getUserPrefs(groupId);
+  return prefs.bot_admins || [];
+}
+
+async function addBotAdmin(groupId, userId) {
+  const prefs = await getUserPrefs(groupId);
+  if (!prefs.bot_admins) prefs.bot_admins = [];
+  if (!prefs.bot_admins.includes(userId)) {
+    prefs.bot_admins.push(userId);
+    await saveUserPrefs(groupId, prefs);
+  }
 }
 
 async function sendTelegramMessage(chatId, text, replyMarkup = null) {
@@ -304,6 +322,10 @@ async function handleCommand(message) {
   const isAdmin = async () => {
     if (!isGroup) return true; // Always admin in private chat
     
+    // Check if user is a bot admin
+    const botAdmins = await getBotAdmins(prefId);
+    if (botAdmins.includes(from.id.toString())) return true;
+    
     try {
       const token = await getBotToken();
       const response = await fetch(`https://api.telegram.org/bot${token}/getChatMember?chat_id=${chat.id}&user_id=${from.id}`);
@@ -326,7 +348,9 @@ async function handleCommand(message) {
         `• "Standup Monday 9am"\n\n` +
         `<b>Group Commands (Admin Only):</b>\n` +
         `/tz &lt;timezone&gt; - Set group timezone\n` +
-        `/duration &lt;minutes&gt; - Set group default duration\n\n` +
+        `/duration &lt;minutes&gt; - Set group default duration\n` +
+        `/admin - Reply to a message to promote user as bot admin\n` +
+        `/blacklist &lt;word&gt; - Add/remove words from blacklist\n\n` +
         `<b>Anyone can:</b> Create events by mentioning dates/times\n` +
         `Try: <i>"Meeting tomorrow 2pm"</i> 🚀` :
         `🤖 <b>Welcome to Telegram Scheduler Bot!</b>\n\n` +
@@ -386,6 +410,61 @@ async function handleCommand(message) {
       await sendTelegramMessage(chat.id, `✅ ${durationScopeMsg} default duration set to ${duration} minutes`);
       break;
       
+    case '/admin':
+      if (!isGroup) {
+        await sendTelegramMessage(chat.id, '❌ Admin command only works in groups');
+        return;
+      }
+      
+      if (!(await isAdmin())) {
+        await sendTelegramMessage(chat.id, '❌ Only group admins can promote bot admins');
+        return;
+      }
+      
+      if (parts.length < 2) {
+        await sendTelegramMessage(chat.id, 'Usage: /admin @username or reply to a message');
+        return;
+      }
+      
+      let targetUserId;
+      if (message.reply_to_message) {
+        targetUserId = message.reply_to_message.from.id.toString();
+      } else {
+        await sendTelegramMessage(chat.id, 'Please reply to a user\'s message to promote them as bot admin');
+        return;
+      }
+      
+      await addBotAdmin(prefId, targetUserId);
+      await sendTelegramMessage(chat.id, '✅ User promoted to bot admin for this group');
+      break;
+      
+    case '/blacklist':
+      if (parts.length < 2) {
+        const scope = isGroup ? 'group' : 'your';
+        const blacklist = await getUserPrefs(prefId);
+        await sendTelegramMessage(chat.id, `Current ${scope} blacklist: ${blacklist.blacklist.join(', ')}\n\nUsage: /blacklist <word> to add/remove`);
+        return;
+      }
+      
+      if (isGroup && !(await isAdmin())) {
+        await sendTelegramMessage(chat.id, '❌ Only group admins can manage blacklist');
+        return;
+      }
+      
+      const word = parts[1].toLowerCase();
+      const blacklistPrefs = await getUserPrefs(prefId);
+      
+      if (blacklistPrefs.blacklist.includes(word)) {
+        blacklistPrefs.blacklist = blacklistPrefs.blacklist.filter(w => w !== word);
+        await saveUserPrefs(prefId, blacklistPrefs);
+        await sendTelegramMessage(chat.id, `✅ Removed "${word}" from blacklist`);
+      } else {
+        blacklistPrefs.blacklist.push(word);
+        await saveUserPrefs(prefId, blacklistPrefs);
+        await sendTelegramMessage(chat.id, `✅ Added "${word}" to blacklist`);
+      }
+      break;
+      
     default:
       await sendTelegramMessage(chat.id, 'Unknown command. Type /help for available commands.');
   }
@@ -405,6 +484,11 @@ async function handleMessage(message) {
   const isGroup = chat.type === 'group' || chat.type === 'supergroup';
   const prefId = isGroup ? chat.id.toString() : from.id.toString();
   const prefs = await getUserPrefs(prefId);
+  
+  // Check if message contains blacklisted words
+  const lowerText = text.toLowerCase();
+  const hasBlacklistedWord = prefs.blacklist.some(word => lowerText.includes(word));
+  if (hasBlacklistedWord) return;
   
   const dateMatch = parseDateTime(text, prefs.timezone);
   if (!dateMatch) return;
