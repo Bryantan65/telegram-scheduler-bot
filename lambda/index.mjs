@@ -42,16 +42,30 @@ async function getUserPrefs(userId) {
 }
 
 async function saveUserPrefs(userId, prefs) {
+  const item = {
+    user_id: { S: userId },
+    timezone: { S: prefs.timezone },
+    duration_min: { N: prefs.duration_min.toString() }
+  };
+  
+  // Only add string sets if they have values (DynamoDB doesn't allow empty SS)
+  if (prefs.bot_admins && prefs.bot_admins.length > 0) {
+    item.bot_admins = { SS: prefs.bot_admins };
+  }
+  
+  if (prefs.blacklist && prefs.blacklist.length > 0) {
+    item.blacklist = { SS: prefs.blacklist };
+  } else {
+    item.blacklist = { SS: ['now'] }; // Default blacklist
+  }
+  
+  if (prefs.whitelist && prefs.whitelist.length > 0) {
+    item.whitelist = { SS: prefs.whitelist };
+  }
+  
   const command = new PutItemCommand({
     TableName: process.env.USERS_TABLE,
-    Item: {
-      user_id: { S: userId },
-      timezone: { S: prefs.timezone },
-      duration_min: { N: prefs.duration_min.toString() },
-      bot_admins: { SS: prefs.bot_admins || [] },
-      blacklist: { SS: prefs.blacklist || ['now'] },
-      whitelist: { SS: prefs.whitelist || [] }
-    }
+    Item: item
   });
   
   await dynamodb.send(command);
