@@ -141,71 +141,7 @@ function parseDateTime(text, timezone) {
   // ONLY look for specific date patterns - no relative dates or random numbers
   let results = [];
   
-  // Look for specific date patterns with optional time
-  // Pattern 1: "28th" or "28th 5pm" or "28th 1130am" or "28th 1130 am"
-  const dayOnlyMatch = text.match(/(\d{1,2})(st|nd|rd|th)(?:\s+(\d{1,2})(\d{2})?\s?(am|pm)?)?/i);
-  if (dayOnlyMatch) {
-    const day = parseInt(dayOnlyMatch[1]);
-    let hour = null;
-    let minutes = 0;
-    
-    if (dayOnlyMatch[3]) {
-      const timeStr = dayOnlyMatch[3] + (dayOnlyMatch[4] || '');
-      if (timeStr.length === 3 || timeStr.length === 4) {
-        // Handle 4-digit time like "1130" or 3-digit like "930"
-        if (timeStr.length === 4) {
-          hour = parseInt(timeStr.substring(0, 2));
-          minutes = parseInt(timeStr.substring(2));
-        } else {
-          hour = parseInt(timeStr.substring(0, 1));
-          minutes = parseInt(timeStr.substring(1));
-        }
-      } else {
-        hour = parseInt(dayOnlyMatch[3]);
-        minutes = dayOnlyMatch[4] ? parseInt(dayOnlyMatch[4]) : 0;
-      }
-    }
-    const ampm = dayOnlyMatch[5] ? dayOnlyMatch[5].toLowerCase() : null;
-    
-    // Validate day is reasonable (1-31)
-    if (day >= 1 && day <= 31) {
-      console.log('Found day pattern:', { day, hour, minutes, ampm });
-      
-      const currentMonth = now.getMonth();
-      const currentYear = now.getFullYear();
-      
-      let targetDate;
-      if (hour !== null) {
-        // Has time component
-        let hour24 = hour;
-        if (ampm === 'pm' && hour !== 12) hour24 += 12;
-        if (ampm === 'am' && hour === 12) hour24 = 0;
-        
-        targetDate = new Date(currentYear, currentMonth, day, hour24, minutes);
-      } else {
-        // Date only - all day event
-        targetDate = new Date(currentYear, currentMonth, day);
-      }
-      
-      results = [{
-        index: dayOnlyMatch.index,
-        text: dayOnlyMatch[0],
-        start: {
-          date: () => targetDate,
-          knownValues: { 
-            year: currentYear, 
-            month: currentMonth + 1, 
-            day, 
-            hour: hour !== null ? (ampm === 'pm' && hour !== 12 ? hour + 12 : (ampm === 'am' && hour === 12 ? 0 : hour)) : undefined,
-            minute: hour !== null ? minutes : undefined
-          }
-        }
-      }];
-    }
-  }
-  
-  // Pattern 2: "28 Oct" or "Oct 28" with comprehensive time patterns
-  if (results.length === 0) {
+  // Pattern: "28 Oct" or "Oct 28" with comprehensive time patterns
     const dateOnlyMatch = text.match(/\b(?:(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)|(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}))/i);
     
     if (dateOnlyMatch) {
