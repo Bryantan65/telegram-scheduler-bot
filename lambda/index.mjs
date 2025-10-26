@@ -241,8 +241,7 @@ function extractTitle(text, dateMatch) {
     // Month-day patterns
     /\b\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\b/gi,
     /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}\b/gi,
-    // Day with ordinals
-    /(\d{1,2})(st|nd|rd|th)/gi,
+
     // Time ranges with various formats
     /\bfrom\s+\d{1,2}[.:]?\d{0,2}\s?(am|pm)?\s+to\s+\d{1,2}[.:]?\d{0,2}\s?(am|pm)?\b/gi,
     /\d{1,2}[.:]?\d{0,2}\s?(am|pm)?\s*[-–]\s*\d{1,2}[.:]?\d{0,2}\s?(am|pm)?/gi,
