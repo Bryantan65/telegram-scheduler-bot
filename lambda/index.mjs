@@ -226,7 +226,6 @@ function parseDateTime(text, timezone) {
         }];
       }
     }
-  }
   
   // No more fallbacks - only specific date patterns allowed
   
